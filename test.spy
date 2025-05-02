@@ -1,1 +1,3 @@
-34 + 35
+def main() -> None {
+    print(69);
+}
