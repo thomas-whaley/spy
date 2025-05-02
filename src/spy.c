@@ -31,7 +31,7 @@ bool str_eq(char *str_a, char *str_b)
 
 void str_cpy(char *from, char *to, size_t n)
 {
-    for (size_t i = 0; i < n; i++)
+    for (size_t i = 0; i <= n; i++)
     {
         to[i] = from[i];
         if (from[i] == '\0')
@@ -143,55 +143,67 @@ int main(int argc, char **argv)
         if (!expect_plex(&lexer, *file_path, '{'))
             return 1;
 
-        // Statement
         p_lexer_get_token(&lexer);
-        if (lexer.token == PLEX_id)
+        while (lexer.token != '}')
         {
-            // const char *old_parse_point = lexer.parse_point;
-            char id[1024];
-            str_cpy(lexer.string, id, lexer.string_len);
-            p_lexer_get_token(&lexer);
-            if (lexer.token == '(')
+            // Statement
+            size_t local_variables_count = 0;
+            if (lexer.token == PLEX_id)
             {
-                // Function call
-                if (!str_eq(id, "print"))
-                {
-                    print_loc(&lexer, *file_path, lexer.where_firstchar);
-                    fprintf(stderr, ": ERROR: Function calls other than print are currently unsupported.\n");
-                    return 1;
-                }
-                // Function args
+                // const char *old_parse_point = lexer.parse_point;
+                char id[1024];
+                str_cpy(lexer.string, id, lexer.string_len);
                 p_lexer_get_token(&lexer);
-                if (!expect_plex(&lexer, *file_path, PLEX_intlit))
-                    return 1;
-                nob_sb_appendf(&output, "    movl $%ld, %%edi\n", lexer.int_number);
-                nob_sb_appendf(&output, "    call _putchar\n");
+                if (lexer.token == '(')
+                {
+                    // Function call
+                    if (!str_eq(id, "print"))
+                    {
+                        print_loc(&lexer, *file_path, lexer.where_firstchar);
+                        fprintf(stderr, ": ERROR: Function calls other than print are currently unsupported.\n");
+                        return 1;
+                    }
+                    // Function args
+                    p_lexer_get_token(&lexer);
+                    if (!expect_plex(&lexer, *file_path, PLEX_intlit))
+                        return 1;
+                    nob_sb_appendf(&output, "    movl $%ld, %%edi\n", lexer.int_number);
+                    nob_sb_appendf(&output, "    call _putchar\n");
 
-                p_lexer_get_token(&lexer);
-                // End of function call
-                if (!expect_plex(&lexer, *file_path, ')'))
-                    return 1;
-            }
-            else if (lexer.token == ':')
-            {
-                // Variable assignment
-                p_lexer_get_token(&lexer);
-                if (!expect_plex(&lexer, *file_path, PLEX_id))
-                    return 1;
-                if (!str_eq(lexer.string, "int"))
+                    p_lexer_get_token(&lexer);
+                    // End of function call
+                    if (!expect_plex(&lexer, *file_path, ')'))
+                        return 1;
+                }
+                else if (lexer.token == ':')
+                {
+                    // Variable assignment
+                    p_lexer_get_token(&lexer);
+                    if (!expect_plex(&lexer, *file_path, PLEX_id))
+                        return 1;
+                    if (!str_eq(lexer.string, "int"))
+                    {
+                        print_loc(&lexer, *file_path, lexer.where_firstchar);
+                        fprintf(stderr, ": ERROR: Variable types other than int are currently unsupported.\n");
+                        return 1;
+                    }
+                    p_lexer_get_token(&lexer);
+                    if (!expect_plex(&lexer, *file_path, '='))
+                        return 1;
+                    // Expression
+                    p_lexer_get_token(&lexer);
+                    if (!expect_plex(&lexer, *file_path, PLEX_intlit))
+                        return 1;
+                    // TODO: Put (id: local_variables_count) into map to lookup later
+                    local_variables_count++;
+                    nob_sb_appendf(&output, "    movl $%ld, -%zu(%%rbp)\n", lexer.int_number, local_variables_count * 4);
+                }
+                else
                 {
                     print_loc(&lexer, *file_path, lexer.where_firstchar);
-                    fprintf(stderr, ": ERROR: Variable types other than int are currently unsupported.\n");
+                    fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
                     return 1;
                 }
-                p_lexer_get_token(&lexer);
-                if (!expect_plex(&lexer, *file_path, '='))
-                    return 1;
-                // Expression
-                p_lexer_get_token(&lexer);
-                if (!expect_plex(&lexer, *file_path, PLEX_intlit))
-                    return 1;
-                nob_sb_appendf(&output, "    movl $%ld, -4(%%rbp)\n", lexer.int_number);
             }
             else
             {
@@ -199,21 +211,15 @@ int main(int argc, char **argv)
                 fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
                 return 1;
             }
-        }
-        else
-        {
-            print_loc(&lexer, *file_path, lexer.where_firstchar);
-            fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
-            return 1;
-        }
 
-        p_lexer_get_token(&lexer);
-        if (!expect_plex(&lexer, *file_path, ';'))
-            return 1;
+            p_lexer_get_token(&lexer);
+            if (!expect_plex(&lexer, *file_path, ';'))
+                return 1;
+
+            p_lexer_get_token(&lexer);
+        }
 
         // End of statement
-
-        p_lexer_get_token(&lexer);
         if (!expect_plex(&lexer, *file_path, '}'))
             return 1;
 
