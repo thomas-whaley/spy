@@ -1,5 +1,7 @@
 #define LEXER_IMPLEMENTATION
-#include <strict_python_lexer.h>
+#include "strict_python_lexer.h"
+
+#include "nob.h"
 
 #include <stdio.h>
 

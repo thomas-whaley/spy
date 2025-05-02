@@ -62,10 +62,9 @@ enum
     PLEX_shreq,
 
     PLEX_first_unused_token
-}
+};
 
-extern void
-p_lexer_init(stb_lexer *lexer, const char *input_stream, const char *input_stream_end, char *string_store, int store_length);
+extern void p_lexer_init(stb_lexer *lexer, const char *input_stream, const char *input_stream_end, char *string_store, int store_length);
 
 extern int p_lexer_get_token(stb_lexer *lexer);
 
@@ -123,14 +122,6 @@ static int p_lex_iswhite(int x)
     return x == ' ' || x == '\t' || x == '\r' || x == '\n' || x == '\f';
 }
 
-static const char *p_strchr(const char *str, int ch)
-{
-    for (; *str; ++str)
-        if (*str == ch)
-            return str;
-    return 0;
-}
-
 static int p_lex_parse_suffixes(stb_lexer *lexer, long tokenid, char *start, char *cur)
 {
     return p_lex_token(lexer, tokenid, start, cur - 1);
@@ -150,7 +141,6 @@ static double p_lex_pow(double base, unsigned int exponent)
 
 static double p_lex_parse_float(char *p, char **q)
 {
-    char *s = p;
     double value = 0;
     int base = 10;
     int exponent = 0;
@@ -442,6 +432,7 @@ int p_lexer_get_token(stb_lexer *lexer)
     case '7':
     case '8':
     case '9':
+    {
         char *q = p;
         while (q != lexer->eof && (*q >= '0' && *q <= '9'))
             ++q;
@@ -454,20 +445,23 @@ int p_lexer_get_token(stb_lexer *lexer)
                 // return p_lex_parse_suffixes(lexer, PLEX_floatlit, p, q);
             }
         }
+    }
 
-        char *q = p;
-        int n = 0;
-        while (q != lexer->eof)
         {
-            if (*q >= '0' && *q <= '9')
-                n = n * 10 + (*q - '0');
-            else
-                break;
-            ++q;
+            char *q = p;
+            int n = 0;
+            while (q != lexer->eof)
+            {
+                if (*q >= '0' && *q <= '9')
+                    n = n * 10 + (*q - '0');
+                else
+                    break;
+                ++q;
+            }
+            lexer->int_number = n;
+            return p_lex_parse_suffixes(lexer, PLEX_intlit, p, q);
+            goto single_char;
         }
-        lexer->int_number = n;
-        return p_lex_parse_suffixes(lexer, PLEX_intlit, p, q);
-        goto single_char;
     }
 }
 
