@@ -62,6 +62,7 @@ bool expect_id(stb_lexer *lexer, char *file_path, char *compare_string)
 int main(int argc, char **argv)
 {
     char **file_path = flag_str("path", NULL, "Path to the input spy file (MANDATORY)");
+    char **output_path = flag_str("o", NULL, "Path to the output file (MANDATORY)");
 
     if (!flag_parse(argc, argv))
     {
@@ -74,6 +75,13 @@ int main(int argc, char **argv)
     {
         usage();
         fprintf(stderr, "ERROR: No -%s was provided\n", flag_name(file_path));
+        return 1;
+    }
+
+    if (*output_path == NULL)
+    {
+        usage();
+        fprintf(stderr, "ERROR: No -%s was provided\n", flag_name(output_path));
         return 1;
     }
 
@@ -92,6 +100,8 @@ int main(int argc, char **argv)
 
     p_lexer_init(&lexer, sb.items, sb.items + sb.count, string_store, sizeof string_store);
 
+    Nob_String_Builder output = {0};
+
     while (true)
     {
         p_lexer_get_token(&lexer);
@@ -99,7 +109,7 @@ int main(int argc, char **argv)
         {
             break;
         }
-        printf("    .globl _main\n");
+        nob_sb_appendf(&output, "    .globl _main\n");
 
         // def
         expect_id(&lexer, *file_path, "def");
@@ -107,8 +117,8 @@ int main(int argc, char **argv)
         // function_name
         p_lexer_get_token(&lexer);
         expect_plex(&lexer, *file_path, PLEX_id);
-        printf("_%s:\n", lexer.string);
-        printf("    push %%rbp\n");
+        nob_sb_appendf(&output, "_%s:\n", lexer.string);
+        nob_sb_appendf(&output, "    push %%rbp\n");
 
         p_lexer_get_token(&lexer);
         expect_plex(&lexer, *file_path, '(');
@@ -127,8 +137,8 @@ int main(int argc, char **argv)
         expect_plex(&lexer, *file_path, '(');
         p_lexer_get_token(&lexer);
         expect_plex(&lexer, *file_path, PLEX_intlit);
-        printf("    movl $%ld, %%edi\n", lexer.int_number);
-        printf("    call _putchar\n");
+        nob_sb_appendf(&output, "    movl $%ld, %%edi\n", lexer.int_number);
+        nob_sb_appendf(&output, "    call _putchar\n");
 
         p_lexer_get_token(&lexer);
         expect_plex(&lexer, *file_path, ')');
@@ -138,9 +148,16 @@ int main(int argc, char **argv)
         p_lexer_get_token(&lexer);
         expect_plex(&lexer, *file_path, '}');
 
-        printf("    mov $0, %%eax\n");
-        printf("    pop %%rbp\n");
-        printf("    ret\n");
-        return 0;
+        nob_sb_appendf(&output, "    mov $0, %%eax\n");
+        nob_sb_appendf(&output, "    pop %%rbp\n");
+        nob_sb_appendf(&output, "    ret\n");
     }
+
+    if (!nob_write_entire_file(*output_path, output.items, output.count))
+    {
+        fprintf(stderr, "ERROR: Unable to write to %s\n", *output_path);
+        return 1;
+    }
+
+    return 0;
 }
