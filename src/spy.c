@@ -224,9 +224,31 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             }
             // Function args
             p_lexer_get_token(lexer);
-            if (!expect_plex(lexer, file_path, PLEX_intlit))
+            if (lexer->token == PLEX_intlit)
+            {
+                nob_sb_appendf(output, "    movl $%ld, %%eax\n", lexer->int_number);
+            }
+            else if (lexer->token == PLEX_id)
+            {
+                // Check if not keyword
+                spy_var *var_check = find_var(vars, lexer->string);
+                if (var_check == NULL)
+                {
+                    print_loc(lexer, file_path, lexer->where_firstchar);
+                    fprintf(stderr, ": ERROR: Undefined variable.\n");
+                    print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
+                    return false;
+                }
+                nob_sb_appendf(output, "    movl -%zu(%%rbp), %%eax\n", var_check->index * 4);
+            }
+            else
+            {
+                print_loc(lexer, file_path, lexer->where_firstchar);
+                fprintf(stderr, ": ERROR: Expression only supports integers and other variables.\n");
+                print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                 return false;
-            nob_sb_appendf(output, "    movl $%ld, %%edi\n", lexer->int_number);
+            }
+            nob_sb_appendf(output, "    movl %%eax, %%edi\n");
             nob_sb_appendf(output, "    call _putchar\n");
 
             p_lexer_get_token(lexer);
@@ -257,6 +279,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             p_lexer_get_token(lexer);
             if (!expect_plex(lexer, file_path, '='))
                 return false;
+            (*local_variables_count)++;
             // Expression
             p_lexer_get_token(lexer);
             if (lexer->token == PLEX_intlit)
@@ -297,7 +320,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 print_line(lexer, var_check->where, var_check->where_last);
                 return false;
             }
-            (*local_variables_count)++;
+
             spy_var var = {
                 .name = id,
                 .where = id_where,
