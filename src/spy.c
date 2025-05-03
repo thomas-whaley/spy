@@ -39,6 +39,93 @@ void str_cpy(char *from, char *to, size_t n)
     }
 }
 
+char *pretty_token(long token)
+{
+    switch (token)
+    {
+    case PLEX_eof:
+        return "eof";
+    case PLEX_parse_error:
+        return "parse error";
+    case PLEX_intlit:
+        return "integer literal";
+    case PLEX_floatlit:
+        return "float literal";
+    case PLEX_id:
+        return "identifier";
+    case PLEX_dqstring:
+        return "\"";
+    case PLEX_sqstring:
+        return "\'";
+    case PLEX_eq:
+        return "==";
+    case PLEX_noteq:
+        return "!=";
+    case PLEX_lesseq:
+        return "<=";
+    case PLEX_greatereq:
+        return ">=";
+    case PLEX_shl:
+        return "<<";
+    case PLEX_shr:
+        return ">>";
+    case PLEX_pluseq:
+        return "+=";
+    case PLEX_minuseq:
+        return "-=";
+    case PLEX_muleq:
+        return "*=";
+    case PLEX_diveq:
+        return "/=";
+    case PLEX_modeq:
+        return "%=";
+    case PLEX_andeq:
+        return "&=";
+    case PLEX_oreq:
+        return "|=";
+    case PLEX_xoreq:
+        return "^=";
+    case PLEX_arrow:
+        return "->";
+    case PLEX_shleq:
+        return ">>=";
+    case PLEX_shreq:
+        return "<<=";
+    }
+    return nob_temp_sprintf("%c", (char)token);
+}
+
+void print_line(stb_lexer *lexer, char *where_start, char *where_end)
+{
+    // TODO: maybe remove line number, its slow :)
+    stb_lex_location loc = {0};
+    p_lexer_get_location(lexer, where_start, &loc);
+    printf("%d", loc.line_number);
+
+    char *ptr = where_start;
+    size_t start_col = 0;
+    while (ptr != lexer->input_stream && *(ptr - 1) != '\n')
+    {
+        ptr--;
+        start_col++;
+    }
+    while (ptr != lexer->eof && *ptr != '\n')
+    {
+        putchar(*ptr);
+        ptr++;
+    }
+    putchar('\n');
+    for (size_t i = 0; i < start_col + 1; i++)
+    {
+        putchar(' ');
+    }
+    for (size_t i = 0; i <= (size_t)(where_end - where_start); i++)
+    {
+        putchar('~');
+    }
+    putchar('\n');
+}
+
 void print_loc(stb_lexer *lexer, char *file_path, const char *where)
 {
     stb_lex_location loc = {0};
@@ -51,7 +138,8 @@ bool expect_plex(stb_lexer *lexer, char *file_path, long plex)
     if (lexer->token != plex)
     {
         print_loc(lexer, file_path, lexer->where_firstchar);
-        fprintf(stderr, ": ERROR: expected %ld but got %ld\n", plex, lexer->token);
+        fprintf(stderr, ": ERROR: expected %s but got %s\n", pretty_token(plex), pretty_token(lexer->token));
+        print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
         return false;
     }
     return true;
@@ -65,6 +153,7 @@ bool expect_id(stb_lexer *lexer, char *file_path, char *compare_string)
     {
         print_loc(lexer, file_path, lexer->where_firstchar);
         fprintf(stderr, ": ERROR: expected `%s` but got `%s`\n", compare_string, lexer->string);
+        print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
         return false;
     }
     return true;
@@ -75,6 +164,7 @@ typedef struct
     char *name;
     size_t index;
     char *where;
+    char *where_last;
 } spy_var;
 
 typedef struct
@@ -103,6 +193,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
         // const char *old_parse_point = lexer.parse_point;
         char *id = strdup(lexer->string);
         char *id_where = lexer->where_firstchar;
+        char *id_where_last = lexer->where_firstchar;
         str_cpy(lexer->string, id, lexer->string_len);
         p_lexer_get_token(lexer);
         if (lexer->token == '(')
@@ -112,6 +203,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             {
                 print_loc(lexer, file_path, lexer->where_firstchar);
                 fprintf(stderr, ": ERROR: Function calls other than print are currently unsupported.\n");
+                print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                 return false;
             }
             // Function args
@@ -136,6 +228,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             {
                 print_loc(lexer, file_path, lexer->where_firstchar);
                 fprintf(stderr, ": ERROR: Variable types other than int are currently unsupported.\n");
+                print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                 return false;
             }
             p_lexer_get_token(lexer);
@@ -151,13 +244,16 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             {
                 print_loc(lexer, file_path, lexer->where_firstchar);
                 fprintf(stderr, ": ERROR: Cannot declare existing variable.\n");
+                print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                 print_loc(lexer, file_path, var_check->where);
                 fprintf(stderr, ": NOTE: Original definition is here.\n");
+                print_line(lexer, var_check->where, var_check->where_last);
                 return false;
             }
             spy_var var = {
                 .name = id,
                 .where = id_where,
+                .where_last = id_where_last,
                 .index = *local_variables_count,
             };
             nob_da_append(vars, var);
@@ -168,6 +264,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
         {
             print_loc(lexer, file_path, lexer->where_firstchar);
             fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
+            print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
             return false;
         }
     }
@@ -175,6 +272,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
     {
         print_loc(lexer, file_path, lexer->where_firstchar);
         fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
+        print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
         return false;
     }
 
@@ -217,7 +315,8 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, Nob_Strin
     size_t local_variables_count = 0;
     while (lexer->token != '}')
     {
-        parse_statement(lexer, file_path, vars, &local_variables_count, output);
+        if (!parse_statement(lexer, file_path, vars, &local_variables_count, output))
+            return false;
         p_lexer_get_token(lexer);
     }
 
