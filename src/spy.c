@@ -70,6 +70,32 @@ bool expect_id(stb_lexer *lexer, char *file_path, char *compare_string)
     return true;
 }
 
+typedef struct
+{
+    char *name;
+    size_t index;
+    char *where;
+} spy_var;
+
+typedef struct
+{
+    spy_var *items;
+    size_t count;
+    size_t capacity;
+} spy_vars;
+
+spy_var *find_var(spy_vars *vars, char *name)
+{
+    for (size_t i = 0; i < vars->count; i++)
+    {
+        if (str_eq(vars->items[i].name, name))
+        {
+            return &vars->items[i];
+        }
+    }
+    return NULL;
+}
+
 int main(int argc, char **argv)
 {
     char **file_path = flag_str("path", NULL, "Path to the input spy file (MANDATORY)");
@@ -106,6 +132,8 @@ int main(int argc, char **argv)
     p_lexer_init(&lexer, sb.items, sb.items + sb.count, string_store, sizeof string_store);
 
     Nob_String_Builder output = {0};
+
+    spy_vars vars = {0};
 
     while (true)
     {
@@ -144,14 +172,15 @@ int main(int argc, char **argv)
             return 1;
 
         p_lexer_get_token(&lexer);
+        size_t local_variables_count = 0;
         while (lexer.token != '}')
         {
             // Statement
-            size_t local_variables_count = 0;
             if (lexer.token == PLEX_id)
             {
                 // const char *old_parse_point = lexer.parse_point;
-                char id[1024];
+                char *id = strdup(lexer.string);
+                char *id_where = lexer.where_firstchar;
                 str_cpy(lexer.string, id, lexer.string_len);
                 p_lexer_get_token(&lexer);
                 if (lexer.token == '(')
@@ -195,6 +224,21 @@ int main(int argc, char **argv)
                     if (!expect_plex(&lexer, *file_path, PLEX_intlit))
                         return 1;
                     // TODO: Put (id: local_variables_count) into map to lookup later
+                    spy_var *var_check = find_var(&vars, id);
+                    if (var_check != NULL)
+                    {
+                        print_loc(&lexer, *file_path, lexer.where_firstchar);
+                        fprintf(stderr, ": ERROR: Cannot declare existing variable.\n");
+                        print_loc(&lexer, *file_path, var_check->where);
+                        fprintf(stderr, ": NOTE: Original definition is here.\n");
+                        return 1;
+                    }
+                    spy_var var = {
+                        .name = id,
+                        .where = id_where,
+                        .index = local_variables_count,
+                    };
+                    nob_da_append(&vars, var);
                     local_variables_count++;
                     nob_sb_appendf(&output, "    movl $%ld, -%zu(%%rbp)\n", lexer.int_number, local_variables_count * 4);
                 }
