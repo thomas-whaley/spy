@@ -159,6 +159,10 @@ bool expect_id(stb_lexer *lexer, char *file_path, char *compare_string)
     return true;
 }
 
+char *KEYWORDS[] = {
+    "def",
+};
+
 typedef struct
 {
     char *name;
@@ -186,6 +190,18 @@ spy_var *find_var(spy_vars *vars, char *name)
     return NULL;
 }
 
+bool is_keyword(char *name)
+{
+    for (size_t i = 0; i < sizeof KEYWORDS / sizeof(char *); i++)
+    {
+        if (str_eq(KEYWORDS[i], name))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, Nob_String_Builder *output)
 {
     if (lexer->token == PLEX_id)
@@ -193,7 +209,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
         // const char *old_parse_point = lexer.parse_point;
         char *id = strdup(lexer->string);
         char *id_where = lexer->where_firstchar;
-        char *id_where_last = lexer->where_firstchar;
+        char *id_where_last = lexer->where_lastchar;
         str_cpy(lexer->string, id, lexer->string_len);
         p_lexer_get_token(lexer);
         if (lexer->token == '(')
@@ -221,6 +237,13 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
         else if (lexer->token == ':')
         {
             // Variable assignment
+            if (is_keyword(id))
+            {
+                print_loc(lexer, file_path, id_where);
+                fprintf(stderr, ": ERROR: Cannot assign keyword.\n");
+                print_line(lexer, id_where, id_where_last);
+                return false;
+            }
             p_lexer_get_token(lexer);
             if (!expect_plex(lexer, file_path, PLEX_id))
                 return false;
@@ -236,9 +259,33 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 return false;
             // Expression
             p_lexer_get_token(lexer);
-            if (!expect_plex(lexer, file_path, PLEX_intlit))
+            if (lexer->token == PLEX_intlit)
+            {
+                nob_sb_appendf(output, "    movl $%ld, -%zu(%%rbp)\n", lexer->int_number, *local_variables_count * 4);
+            }
+            else if (lexer->token == PLEX_id)
+            {
+                // Check if not keyword
+                spy_var *var_check = find_var(vars, lexer->string);
+                if (var_check == NULL)
+                {
+                    print_loc(lexer, file_path, lexer->where_firstchar);
+                    fprintf(stderr, ": ERROR: Undefined variable.\n");
+                    print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
+                    return false;
+                }
+                nob_sb_appendf(output, "    movl -%zu(%%rbp), %%eax\n", var_check->index * 4);
+                nob_sb_appendf(output, "    movl %%eax, -%zu(%%rbp)\n", *local_variables_count * 4);
+            }
+            else
+            {
+                print_loc(lexer, file_path, lexer->where_firstchar);
+                fprintf(stderr, ": ERROR: Expression only supports integers and other variables.\n");
+                print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                 return false;
-            // TODO: Put (id: local_variables_count) into map to lookup later
+            }
+
+            // TODO: Check variable name is not a keyword
             spy_var *var_check = find_var(vars, id);
             if (var_check != NULL)
             {
@@ -250,6 +297,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 print_line(lexer, var_check->where, var_check->where_last);
                 return false;
             }
+            (*local_variables_count)++;
             spy_var var = {
                 .name = id,
                 .where = id_where,
@@ -257,8 +305,6 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 .index = *local_variables_count,
             };
             nob_da_append(vars, var);
-            (*local_variables_count)++;
-            nob_sb_appendf(output, "    movl $%ld, -%zu(%%rbp)\n", lexer->int_number, *local_variables_count * 4);
         }
         else
         {
