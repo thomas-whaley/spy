@@ -96,6 +96,141 @@ spy_var *find_var(spy_vars *vars, char *name)
     return NULL;
 }
 
+bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, Nob_String_Builder *output)
+{
+    if (lexer->token == PLEX_id)
+    {
+        // const char *old_parse_point = lexer.parse_point;
+        char *id = strdup(lexer->string);
+        char *id_where = lexer->where_firstchar;
+        str_cpy(lexer->string, id, lexer->string_len);
+        p_lexer_get_token(lexer);
+        if (lexer->token == '(')
+        {
+            // Function call
+            if (!str_eq(id, "print"))
+            {
+                print_loc(lexer, file_path, lexer->where_firstchar);
+                fprintf(stderr, ": ERROR: Function calls other than print are currently unsupported.\n");
+                return false;
+            }
+            // Function args
+            p_lexer_get_token(lexer);
+            if (!expect_plex(lexer, file_path, PLEX_intlit))
+                return false;
+            nob_sb_appendf(output, "    movl $%ld, %%edi\n", lexer->int_number);
+            nob_sb_appendf(output, "    call _putchar\n");
+
+            p_lexer_get_token(lexer);
+            // End of function call
+            if (!expect_plex(lexer, file_path, ')'))
+                return false;
+        }
+        else if (lexer->token == ':')
+        {
+            // Variable assignment
+            p_lexer_get_token(lexer);
+            if (!expect_plex(lexer, file_path, PLEX_id))
+                return false;
+            if (!str_eq(lexer->string, "int"))
+            {
+                print_loc(lexer, file_path, lexer->where_firstchar);
+                fprintf(stderr, ": ERROR: Variable types other than int are currently unsupported.\n");
+                return false;
+            }
+            p_lexer_get_token(lexer);
+            if (!expect_plex(lexer, file_path, '='))
+                return false;
+            // Expression
+            p_lexer_get_token(lexer);
+            if (!expect_plex(lexer, file_path, PLEX_intlit))
+                return false;
+            // TODO: Put (id: local_variables_count) into map to lookup later
+            spy_var *var_check = find_var(vars, id);
+            if (var_check != NULL)
+            {
+                print_loc(lexer, file_path, lexer->where_firstchar);
+                fprintf(stderr, ": ERROR: Cannot declare existing variable.\n");
+                print_loc(lexer, file_path, var_check->where);
+                fprintf(stderr, ": NOTE: Original definition is here.\n");
+                return false;
+            }
+            spy_var var = {
+                .name = id,
+                .where = id_where,
+                .index = *local_variables_count,
+            };
+            nob_da_append(vars, var);
+            (*local_variables_count)++;
+            nob_sb_appendf(output, "    movl $%ld, -%zu(%%rbp)\n", lexer->int_number, *local_variables_count * 4);
+        }
+        else
+        {
+            print_loc(lexer, file_path, lexer->where_firstchar);
+            fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
+            return false;
+        }
+    }
+    else
+    {
+        print_loc(lexer, file_path, lexer->where_firstchar);
+        fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
+        return false;
+    }
+
+    p_lexer_get_token(lexer);
+    if (!expect_plex(lexer, file_path, ';'))
+        return false;
+    return true;
+}
+
+bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, Nob_String_Builder *output)
+{
+    // def
+    if (!expect_id(lexer, file_path, "def"))
+        return false;
+
+    // function_name
+    p_lexer_get_token(lexer);
+    if (!expect_plex(lexer, file_path, PLEX_id))
+        return false;
+    nob_sb_appendf(output, "_%s:\n", lexer->string);
+    nob_sb_appendf(output, "    push %%rbp\n");
+
+    p_lexer_get_token(lexer);
+    if (!expect_plex(lexer, file_path, '('))
+        return false;
+    p_lexer_get_token(lexer);
+    if (!expect_plex(lexer, file_path, ')'))
+        return false;
+    p_lexer_get_token(lexer);
+    if (!expect_plex(lexer, file_path, PLEX_arrow))
+        return false;
+    p_lexer_get_token(lexer);
+    if (!expect_id(lexer, file_path, "None"))
+        return false;
+    p_lexer_get_token(lexer);
+    if (!expect_plex(lexer, file_path, '{'))
+        return false;
+
+    p_lexer_get_token(lexer);
+    size_t local_variables_count = 0;
+    while (lexer->token != '}')
+    {
+        parse_statement(lexer, file_path, vars, &local_variables_count, output);
+        p_lexer_get_token(lexer);
+    }
+
+    // End of statement
+    if (!expect_plex(lexer, file_path, '}'))
+        return false;
+
+    nob_sb_appendf(output, "    mov $0, %%eax\n");
+    nob_sb_appendf(output, "    pop %%rbp\n");
+    nob_sb_appendf(output, "    ret\n");
+    return true;
+}
+
 int main(int argc, char **argv)
 {
     char **file_path = flag_str("path", NULL, "Path to the input spy file (MANDATORY)");
@@ -135,142 +270,11 @@ int main(int argc, char **argv)
 
     spy_vars vars = {0};
 
-    while (true)
-    {
-        p_lexer_get_token(&lexer);
-        if (lexer.token == PLEX_eof)
-        {
-            break;
-        }
-        nob_sb_appendf(&output, "    .globl _main\n");
+    p_lexer_get_token(&lexer);
+    nob_sb_appendf(&output, "    .globl _main\n");
 
-        // def
-        if (!expect_id(&lexer, *file_path, "def"))
-            return 1;
-
-        // function_name
-        p_lexer_get_token(&lexer);
-        if (!expect_plex(&lexer, *file_path, PLEX_id))
-            return 1;
-        nob_sb_appendf(&output, "_%s:\n", lexer.string);
-        nob_sb_appendf(&output, "    push %%rbp\n");
-
-        p_lexer_get_token(&lexer);
-        if (!expect_plex(&lexer, *file_path, '('))
-            return 1;
-        p_lexer_get_token(&lexer);
-        if (!expect_plex(&lexer, *file_path, ')'))
-            return 1;
-        p_lexer_get_token(&lexer);
-        if (!expect_plex(&lexer, *file_path, PLEX_arrow))
-            return 1;
-        p_lexer_get_token(&lexer);
-        if (!expect_id(&lexer, *file_path, "None"))
-            return 1;
-        p_lexer_get_token(&lexer);
-        if (!expect_plex(&lexer, *file_path, '{'))
-            return 1;
-
-        p_lexer_get_token(&lexer);
-        size_t local_variables_count = 0;
-        while (lexer.token != '}')
-        {
-            // Statement
-            if (lexer.token == PLEX_id)
-            {
-                // const char *old_parse_point = lexer.parse_point;
-                char *id = strdup(lexer.string);
-                char *id_where = lexer.where_firstchar;
-                str_cpy(lexer.string, id, lexer.string_len);
-                p_lexer_get_token(&lexer);
-                if (lexer.token == '(')
-                {
-                    // Function call
-                    if (!str_eq(id, "print"))
-                    {
-                        print_loc(&lexer, *file_path, lexer.where_firstchar);
-                        fprintf(stderr, ": ERROR: Function calls other than print are currently unsupported.\n");
-                        return 1;
-                    }
-                    // Function args
-                    p_lexer_get_token(&lexer);
-                    if (!expect_plex(&lexer, *file_path, PLEX_intlit))
-                        return 1;
-                    nob_sb_appendf(&output, "    movl $%ld, %%edi\n", lexer.int_number);
-                    nob_sb_appendf(&output, "    call _putchar\n");
-
-                    p_lexer_get_token(&lexer);
-                    // End of function call
-                    if (!expect_plex(&lexer, *file_path, ')'))
-                        return 1;
-                }
-                else if (lexer.token == ':')
-                {
-                    // Variable assignment
-                    p_lexer_get_token(&lexer);
-                    if (!expect_plex(&lexer, *file_path, PLEX_id))
-                        return 1;
-                    if (!str_eq(lexer.string, "int"))
-                    {
-                        print_loc(&lexer, *file_path, lexer.where_firstchar);
-                        fprintf(stderr, ": ERROR: Variable types other than int are currently unsupported.\n");
-                        return 1;
-                    }
-                    p_lexer_get_token(&lexer);
-                    if (!expect_plex(&lexer, *file_path, '='))
-                        return 1;
-                    // Expression
-                    p_lexer_get_token(&lexer);
-                    if (!expect_plex(&lexer, *file_path, PLEX_intlit))
-                        return 1;
-                    // TODO: Put (id: local_variables_count) into map to lookup later
-                    spy_var *var_check = find_var(&vars, id);
-                    if (var_check != NULL)
-                    {
-                        print_loc(&lexer, *file_path, lexer.where_firstchar);
-                        fprintf(stderr, ": ERROR: Cannot declare existing variable.\n");
-                        print_loc(&lexer, *file_path, var_check->where);
-                        fprintf(stderr, ": NOTE: Original definition is here.\n");
-                        return 1;
-                    }
-                    spy_var var = {
-                        .name = id,
-                        .where = id_where,
-                        .index = local_variables_count,
-                    };
-                    nob_da_append(&vars, var);
-                    local_variables_count++;
-                    nob_sb_appendf(&output, "    movl $%ld, -%zu(%%rbp)\n", lexer.int_number, local_variables_count * 4);
-                }
-                else
-                {
-                    print_loc(&lexer, *file_path, lexer.where_firstchar);
-                    fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
-                    return 1;
-                }
-            }
-            else
-            {
-                print_loc(&lexer, *file_path, lexer.where_firstchar);
-                fprintf(stderr, ": ERROR: Invalid statement. Expects function call, or variable assignment\n");
-                return 1;
-            }
-
-            p_lexer_get_token(&lexer);
-            if (!expect_plex(&lexer, *file_path, ';'))
-                return 1;
-
-            p_lexer_get_token(&lexer);
-        }
-
-        // End of statement
-        if (!expect_plex(&lexer, *file_path, '}'))
-            return 1;
-
-        nob_sb_appendf(&output, "    mov $0, %%eax\n");
-        nob_sb_appendf(&output, "    pop %%rbp\n");
-        nob_sb_appendf(&output, "    ret\n");
-    }
+    if (!parse_function(&lexer, *file_path, &vars, &output))
+        return 1;
 
     if (!nob_write_entire_file(*output_path, output.items, output.count))
     {
