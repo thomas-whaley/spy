@@ -3,3 +3,4 @@ nob
 *.old
 *.s
 *.o
+*.py

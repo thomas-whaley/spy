@@ -292,6 +292,23 @@ bool parse_expression_atomic(stb_lexer *lexer, char *file_path, spy_vars *vars, 
     return true;
 }
 
+void parse_maybe_create_var_index(spy_op_expression *expr, size_t *local_variables_count, spy_ops_function *ops)
+{
+    if (expr->type == SPY_OP_EXPR_intlit)
+    {
+        (*local_variables_count)++;
+        spy_op_assign assign_rhs = {
+            .var_index = *local_variables_count,
+            .expr = *expr,
+        };
+        spy_op_stmt stmt_lhs = {
+            .type = SPY_OP_assign,
+            .data.assign = assign_rhs,
+        };
+        nob_da_append(ops, stmt_lhs);
+    }
+}
+
 bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_ops_function *ops, spy_op_expression *expression)
 {
     spy_op_expression lhs = {0};
@@ -303,37 +320,18 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
     p_lexer_get_token(lexer);
     if (lexer->token == '+')
     {
-        (*local_variables_count)++;
-        spy_op_assign assign_lhs = {
-            .var_index = *local_variables_count,
-            .expr = lhs,
-        };
-        spy_op_stmt stmt_lhs = {
-            .type = SPY_OP_assign,
-            .data.assign = assign_lhs,
-        };
-        nob_da_append(ops, stmt_lhs);
+        parse_maybe_create_var_index(&lhs, local_variables_count, ops);
+        size_t lhs_var_index = *local_variables_count;
         p_lexer_get_token(lexer);
         spy_op_expression rhs = {0};
         if (!parse_expression_atomic(lexer, file_path, vars, &rhs))
             return false;
-        if (rhs.type == SPY_OP_EXPR_intlit)
-        {
-            (*local_variables_count)++;
-            spy_op_assign assign_rhs = {
-                .var_index = *local_variables_count,
-                .expr = rhs,
-            };
-            spy_op_stmt stmt_lhs = {
-                .type = SPY_OP_assign,
-                .data.assign = assign_rhs,
-            };
-            nob_da_append(ops, stmt_lhs);
-        }
+        parse_maybe_create_var_index(&rhs, local_variables_count, ops);
+        size_t rhs_var_index = *local_variables_count;
         spy_op_expr_binop binop = {
             .type = SPY_OP_EXPR_BINOP_add,
-            .lhs_var_index = (*local_variables_count) - 1,
-            .rhs_var_index = (*local_variables_count),
+            .lhs_var_index = lhs_var_index,
+            .rhs_var_index = rhs_var_index,
         };
         expression->type = SPY_OP_EXPR_binop;
         expression->data.binop = binop;
@@ -366,30 +364,23 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 return false;
             }
             // Function args
-            (*local_variables_count)++;
             p_lexer_get_token(lexer);
-            spy_op_expression expression = {0};
-            if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &expression))
+            spy_op_expression expr = {0};
+            if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &expr))
                 return false;
-            spy_op_assign assign = {
-                .var_index = *local_variables_count,
-                .expr = expression,
-            };
-            spy_op_stmt op = {
-                .type = SPY_OP_assign,
-                .data.assign = assign,
-            };
-            nob_da_append(ops, op);
+            parse_maybe_create_var_index(&expr, local_variables_count, ops);
             p_lexer_get_token(lexer);
             // End of function call
             if (!expect_plex(lexer, file_path, ')'))
                 return false;
-            spy_op_func_call func_call = {
+            spy_op_func_call op_func_call = {
                 .name = id,
                 .var_index = *local_variables_count,
             };
-            op.type = SPY_OP_func_call;
-            op.data.func_call = func_call;
+            spy_op_stmt op = {
+                .type = SPY_OP_func_call,
+                .data.func_call = op_func_call,
+            };
             nob_da_append(ops, op);
         }
         else if (lexer->token == ':')
@@ -624,7 +615,7 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
             {
                 spy_op_assign *assign = &op_stmt.data.assign;
                 spy_op_expression *expr = &assign->expr;
-                nob_sb_appendf(output, "    var_%ld = ", assign->var_index);
+                nob_sb_appendf(output, "    var_%ld: int = ", assign->var_index);
                 if (!compile_python311_expression(expr, output))
                     return false;
                 nob_sb_appendf(output, "\n");
@@ -633,7 +624,7 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
             case SPY_OP_func_call:
             {
                 spy_op_func_call func_call = op_stmt.data.func_call;
-                nob_sb_appendf(output, "    %s(var_%ld) \n", func_call.name, func_call.var_index);
+                nob_sb_appendf(output, "    %s(var_%ld)\n", func_call.name, func_call.var_index);
                 break;
             }
             }
