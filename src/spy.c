@@ -261,6 +261,37 @@ bool is_keyword(char *name)
     return false;
 }
 
+bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_expression *expression)
+{
+    if (lexer->token == PLEX_intlit)
+    {
+        expression->type = SPY_OP_EXPR_intlit;
+        expression->data.intlit = lexer->int_number;
+    }
+    else if (lexer->token == PLEX_id)
+    {
+        // Check if not keyword
+        spy_var *var_check = find_var(vars, lexer->string);
+        if (var_check == NULL)
+        {
+            print_loc(lexer, file_path, lexer->where_firstchar);
+            fprintf(stderr, ": ERROR: Undefined variable.\n");
+            print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
+            return false;
+        }
+        expression->type = SPY_OP_EXPR_var;
+        expression->data.rhs_index = var_check->index;
+    }
+    else
+    {
+        print_loc(lexer, file_path, lexer->where_firstchar);
+        fprintf(stderr, ": ERROR: Expression only supports integers and other variables.\n");
+        print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
+        return false;
+    }
+    return true;
+}
+
 bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_ops_function *ops)
 {
     if (lexer->token == PLEX_id)
@@ -285,32 +316,8 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             (*local_variables_count)++;
             p_lexer_get_token(lexer);
             spy_op_expression expression = {0};
-            if (lexer->token == PLEX_intlit)
-            {
-                expression.type = SPY_OP_EXPR_intlit;
-                expression.data.intlit = lexer->int_number;
-            }
-            else if (lexer->token == PLEX_id)
-            {
-                // Check if not keyword
-                spy_var *var_check = find_var(vars, lexer->string);
-                if (var_check == NULL)
-                {
-                    print_loc(lexer, file_path, lexer->where_firstchar);
-                    fprintf(stderr, ": ERROR: Undefined variable.\n");
-                    print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
-                    return false;
-                }
-                expression.type = SPY_OP_EXPR_var;
-                expression.data.rhs_index = var_check->index;
-            }
-            else
-            {
-                print_loc(lexer, file_path, lexer->where_firstchar);
-                fprintf(stderr, ": ERROR: Expression only supports integers and other variables.\n");
-                print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
+            if (!parse_expression(lexer, file_path, vars, &expression))
                 return false;
-            }
             spy_op_assign assign = {
                 .var_index = *local_variables_count,
                 .expr = expression,
@@ -359,32 +366,8 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             // Expression
             p_lexer_get_token(lexer);
             spy_op_expression expression = {0};
-            if (lexer->token == PLEX_intlit)
-            {
-                expression.type = SPY_OP_EXPR_intlit;
-                expression.data.intlit = lexer->int_number;
-            }
-            else if (lexer->token == PLEX_id)
-            {
-                // Check if not keyword
-                spy_var *var_check = find_var(vars, lexer->string);
-                if (var_check == NULL)
-                {
-                    print_loc(lexer, file_path, lexer->where_firstchar);
-                    fprintf(stderr, ": ERROR: Undefined variable.\n");
-                    print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
-                    return false;
-                }
-                expression.type = SPY_OP_EXPR_var;
-                expression.data.rhs_index = var_check->index;
-            }
-            else
-            {
-                print_loc(lexer, file_path, lexer->where_firstchar);
-                fprintf(stderr, ": ERROR: Expression only supports integers and other variables.\n");
-                print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
+            if (!parse_expression(lexer, file_path, vars, &expression))
                 return false;
-            }
             // TODO: Check variable name is not a keyword
             spy_var *var_check = find_var(vars, id);
             if (var_check != NULL)
