@@ -509,7 +509,7 @@ enum spy_output_target get_target(char *target_string)
     return -1;
 }
 
-void compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
+bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
 {
     nob_sb_appendf(output, "OPS (count: %zu)\n", ops->count);
     for (size_t i = 0; i < ops->count; i++)
@@ -531,7 +531,7 @@ void compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
                 }
                 else if (expr->type == SPY_OP_EXPR_var)
                 {
-                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_var [ var_%ld = %ld ]\n", assign->var_index, expr->data.rhs_index);
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_var [ var_%ld = var_%ld ]\n", assign->var_index, expr->data.rhs_index);
                 }
                 break;
             }
@@ -545,6 +545,45 @@ void compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
         }
         nob_sb_appendf(output, "}\n");
     }
+    return true;
+}
+
+bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
+{
+    for (size_t i = 0; i < ops->count; i++)
+    {
+        spy_ops_function op_function = ops->items[i];
+        nob_sb_appendf(output, "def %s() -> None:\n", op_function.name);
+        for (size_t j = 0; j < op_function.count; j++)
+        {
+            spy_op_stmt op_stmt = op_function.items[j];
+            switch (op_stmt.type)
+            {
+            case SPY_OP_assign:
+            {
+                spy_op_assign *assign = &op_stmt.data.assign;
+                spy_op_expression *expr = &assign->expr;
+                if (expr->type == SPY_OP_EXPR_intlit)
+                {
+                    nob_sb_appendf(output, "    var_%ld: int = %ld\n", assign->var_index, expr->data.intlit);
+                }
+                else if (expr->type == SPY_OP_EXPR_var)
+                {
+                    nob_sb_appendf(output, "    var_%ld: int = var_%ld\n", assign->var_index, expr->data.rhs_index);
+                }
+                break;
+            }
+            case SPY_OP_func_call:
+            {
+                spy_op_func_call func_call = op_stmt.data.func_call;
+                nob_sb_appendf(output, "    %s(var_%ld) \n", func_call.name, func_call.var_index);
+                break;
+            }
+            }
+        }
+        nob_sb_appendf(output, "\n");
+    }
+    return true;
 }
 
 bool compile_x86_64_macos_file_header(Nob_String_Builder *output)
@@ -624,17 +663,14 @@ bool compile(spy_ops *ops, Nob_String_Builder *output, enum spy_output_target ta
     switch (target)
     {
     case SPY_OUTPUT_TARGET_x86_64_macos:
-        compile_x86_64_macos(ops, output);
-        break;
+        return compile_x86_64_macos(ops, output);
     case SPY_OUTPUT_TARGET_dump_ir:
-        compile_dump_ir(ops, output);
-        break;
+        return compile_dump_ir(ops, output);
     case SPY_OUTPUT_TARGET_aarch64_mac_m1:
         fprintf(stderr, "Target `aarch64-mac-m1` is not supported yet!\n");
         return false;
     case SPY_OUTPUT_TARGET_python311:
-        fprintf(stderr, "Target `python311` is not supported yet!\n");
-        return false;
+        return compile_python311(ops, output);
     }
     return true;
 }
