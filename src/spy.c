@@ -2,17 +2,9 @@
 #include "strict_python_lexer.h"
 #define FLAG_IMPLEMENTATION
 #include "flag.h"
-
 #define NOB_IMPLEMENTATION
 #include "nob.h"
-
 #include <stdio.h>
-
-void usage(void)
-{
-    fprintf(stderr, "Usage: %s [OPTIONS]\n", flag_program_name());
-    flag_print_options(stderr);
-}
 
 bool str_eq(char *str_a, char *str_b)
 {
@@ -26,16 +18,6 @@ bool str_eq(char *str_a, char *str_b)
         {
             return true;
         }
-    }
-}
-
-void str_cpy(char *from, char *to, size_t n)
-{
-    for (size_t i = 0; i <= n; i++)
-    {
-        to[i] = from[i];
-        if (from[i] == '\0')
-            return;
     }
 }
 
@@ -132,6 +114,10 @@ void print_loc(stb_lexer *lexer, char *file_path, const char *where)
     p_lexer_get_location(lexer, where, &loc);
     fprintf(stderr, "%s:%d:%d", file_path, loc.line_number, loc.line_offset + 1);
 }
+
+/*
+    PARSER
+*/
 
 bool expect_plex(stb_lexer *lexer, char *file_path, long plex)
 {
@@ -368,7 +354,6 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
         char *id = strdup(lexer->string);
         char *id_where = lexer->where_firstchar;
         char *id_where_last = lexer->where_lastchar;
-        str_cpy(lexer->string, id, lexer->string_len);
         p_lexer_get_token(lexer);
         if (lexer->token == '(')
         {
@@ -530,6 +515,10 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_ops_f
     return true;
 }
 
+/*
+    COMPILER (OUTPUT)
+*/
+
 enum spy_output_target
 {
     SPY_OUTPUT_TARGET_x86_64_macos,
@@ -544,21 +533,6 @@ char *TARGET_STRINGS[] = {
     "python311",
     "dump-ir",
 };
-
-enum spy_output_target get_target(char *target_string)
-{
-    for (size_t i = 0; i < sizeof TARGET_STRINGS / sizeof(char *); i++)
-    {
-        if (str_eq(target_string, TARGET_STRINGS[i]))
-            return (enum spy_output_target)i;
-    }
-    fprintf(stderr, "Invalid target `%s`! Supports\n", target_string);
-    for (size_t i = 0; i < sizeof TARGET_STRINGS / sizeof(char *); i++)
-    {
-        fprintf(stderr, "    %s\n", TARGET_STRINGS[i]);
-    }
-    return -1;
-}
 
 bool compile_dump_ir_expression(spy_op_expression *expr, Nob_String_Builder *output)
 {
@@ -767,33 +741,95 @@ bool compile(spy_ops *ops, Nob_String_Builder *output, enum spy_output_target ta
     return true;
 }
 
+/*
+    COMMAND LINE ARGS
+*/
+
+void usage(void)
+{
+    fprintf(stderr, "Usage: %s <path> [OPTIONS]\n", flag_program_name());
+    flag_print_options(stderr);
+}
+
+void default_output_path(char *input_path, enum spy_output_target target, Nob_String_Builder *output)
+{
+    size_t ptr = 0;
+    while (input_path[ptr] != '\0' && input_path[ptr] != '.')
+    {
+        nob_sb_appendf(output, "%c", input_path[ptr]);
+        ptr++;
+    }
+    switch (target)
+    {
+    case SPY_OUTPUT_TARGET_x86_64_macos:
+        nob_sb_append_cstr(output, ".s");
+        break;
+    case SPY_OUTPUT_TARGET_dump_ir:
+        nob_sb_append_cstr(output, ".txt");
+        break;
+    case SPY_OUTPUT_TARGET_aarch64_mac_m1:
+        nob_sb_append_cstr(output, ".s");
+        break;
+    case SPY_OUTPUT_TARGET_python311:
+        nob_sb_append_cstr(output, ".py");
+        break;
+    }
+    nob_sb_append_null(output);
+}
+
+enum spy_output_target get_target(char *target_string)
+{
+    for (size_t i = 0; i < sizeof TARGET_STRINGS / sizeof(char *); i++)
+    {
+        if (str_eq(target_string, TARGET_STRINGS[i]))
+            return (enum spy_output_target)i;
+    }
+    fprintf(stderr, "Invalid target `%s`! Supports\n", target_string);
+    for (size_t i = 0; i < sizeof TARGET_STRINGS / sizeof(char *); i++)
+    {
+        fprintf(stderr, "    %s\n", TARGET_STRINGS[i]);
+    }
+    return -1;
+}
+
+/*
+    MAIN
+*/
+
 int main(int argc, char **argv)
 {
-    char **file_path = flag_str("path", NULL, "Path to the input spy file (MANDATORY)");
     char **output_path = flag_str("o", NULL, "Path to the output file (MANDATORY)");
     char **output_target = flag_str("target", NULL, "Target compilation output");
 
-    if (!flag_parse(argc, argv))
+    char *file_path = NULL;
+    while (argc > 0)
     {
-        usage();
-        flag_print_error(stderr);
-        return 1;
+        if (!flag_parse(argc, argv))
+        {
+            usage();
+            flag_print_error(stderr);
+            return 1;
+        }
+        argc = flag_rest_argc();
+        argv = flag_rest_argv();
+        if (argc > 0)
+        {
+            if (file_path != NULL)
+            {
+                // TODO: support compiling several files?
+                fprintf(stderr, "ERROR: Serveral input files is not supported yet\n");
+                return 1;
+            }
+            file_path = flag_shift_args(&argc, &argv);
+        }
     }
 
-    if (*file_path == NULL)
+    if (file_path == NULL)
     {
         usage();
-        fprintf(stderr, "ERROR: No -%s was provided\n", flag_name(file_path));
+        fprintf(stderr, "ERROR: No input path was provided\n");
         return 1;
     }
-
-    if (*output_path == NULL)
-    {
-        usage();
-        fprintf(stderr, "ERROR: No -%s was provided\n", flag_name(output_path));
-        return 1;
-    }
-
     if (*output_target == NULL)
     {
         output_target = &TARGET_STRINGS[0];
@@ -803,9 +839,16 @@ int main(int argc, char **argv)
     if (target < 0)
         return 1;
 
+    Nob_String_Builder default_output_path_sb = {0};
+    if (*output_path == NULL)
+    {
+        default_output_path(file_path, target, &default_output_path_sb);
+        output_path = &default_output_path_sb.items;
+    }
+
     Nob_String_Builder sb = {0};
 
-    nob_read_entire_file(*file_path, &sb);
+    nob_read_entire_file(file_path, &sb);
 
     stb_lexer lexer = {0};
     char string_store[1024];
@@ -819,7 +862,7 @@ int main(int argc, char **argv)
     p_lexer_get_token(&lexer);
     // TODO: turn into while loop to parse multiple files
     spy_ops_function op_function = {0};
-    if (!parse_function(&lexer, *file_path, &vars, &op_function))
+    if (!parse_function(&lexer, file_path, &vars, &op_function))
         return 1;
     nob_da_append(&ops, op_function);
 
@@ -833,6 +876,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    nob_sb_free(default_output_path_sb);
     nob_sb_free(sb);
     nob_sb_free(output);
     nob_da_free(vars);
