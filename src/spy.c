@@ -190,6 +190,65 @@ spy_var *find_var(spy_vars *vars, char *name)
     return NULL;
 }
 
+enum spy_op_type
+{
+    SPY_OP_assign,
+    SPY_OP_func_call,
+};
+
+enum spy_op_expression_type
+{
+    SPY_OP_EXPR_intlit,
+    SPY_OP_EXPR_var,
+};
+
+typedef struct
+{
+    enum spy_op_expression_type type;
+    union
+    {
+        size_t rhs_index;
+        long intlit;
+    } data;
+} spy_op_expression;
+
+typedef struct
+{
+    size_t var_index;
+    spy_op_expression expr;
+} spy_op_assign;
+
+typedef struct
+{
+    char *name;
+    size_t var_index;
+} spy_op_func_call;
+
+typedef struct
+{
+    enum spy_op_type type;
+    union
+    {
+        spy_op_assign assign;
+        spy_op_func_call func_call;
+    } data;
+} spy_op_stmt;
+
+typedef struct
+{
+    spy_op_stmt *items;
+    size_t count;
+    size_t capacity;
+    char *name;
+} spy_ops_function;
+
+typedef struct
+{
+    spy_ops_function *items;
+    size_t count;
+    size_t capacity;
+} spy_ops;
+
 bool is_keyword(char *name)
 {
     for (size_t i = 0; i < sizeof KEYWORDS / sizeof(char *); i++)
@@ -202,7 +261,7 @@ bool is_keyword(char *name)
     return false;
 }
 
-bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, Nob_String_Builder *output)
+bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_ops_function *ops)
 {
     if (lexer->token == PLEX_id)
     {
@@ -223,10 +282,13 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 return false;
             }
             // Function args
+            (*local_variables_count)++;
             p_lexer_get_token(lexer);
+            spy_op_expression expression = {0};
             if (lexer->token == PLEX_intlit)
             {
-                nob_sb_appendf(output, "    movl $%ld, %%eax\n", lexer->int_number);
+                expression.type = SPY_OP_EXPR_intlit;
+                expression.data.intlit = lexer->int_number;
             }
             else if (lexer->token == PLEX_id)
             {
@@ -239,7 +301,8 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                     print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                     return false;
                 }
-                nob_sb_appendf(output, "    movl -%zu(%%rbp), %%eax\n", var_check->index * 4);
+                expression.type = SPY_OP_EXPR_var;
+                expression.data.rhs_index = var_check->index;
             }
             else
             {
@@ -248,13 +311,26 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                 return false;
             }
-            nob_sb_appendf(output, "    movl %%eax, %%edi\n");
-            nob_sb_appendf(output, "    call _putchar\n");
-
+            spy_op_assign assign = {
+                .var_index = *local_variables_count,
+                .expr = expression,
+            };
+            spy_op_stmt op = {
+                .type = SPY_OP_assign,
+                .data.assign = assign,
+            };
+            nob_da_append(ops, op);
             p_lexer_get_token(lexer);
             // End of function call
             if (!expect_plex(lexer, file_path, ')'))
                 return false;
+            spy_op_func_call func_call = {
+                .name = id,
+                .var_index = *local_variables_count,
+            };
+            op.type = SPY_OP_func_call;
+            op.data.func_call = func_call;
+            nob_da_append(ops, op);
         }
         else if (lexer->token == ':')
         {
@@ -282,9 +358,11 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             (*local_variables_count)++;
             // Expression
             p_lexer_get_token(lexer);
+            spy_op_expression expression = {0};
             if (lexer->token == PLEX_intlit)
             {
-                nob_sb_appendf(output, "    movl $%ld, -%zu(%%rbp)\n", lexer->int_number, *local_variables_count * 4);
+                expression.type = SPY_OP_EXPR_intlit;
+                expression.data.intlit = lexer->int_number;
             }
             else if (lexer->token == PLEX_id)
             {
@@ -297,8 +375,8 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                     print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                     return false;
                 }
-                nob_sb_appendf(output, "    movl -%zu(%%rbp), %%eax\n", var_check->index * 4);
-                nob_sb_appendf(output, "    movl %%eax, -%zu(%%rbp)\n", *local_variables_count * 4);
+                expression.type = SPY_OP_EXPR_var;
+                expression.data.rhs_index = var_check->index;
             }
             else
             {
@@ -307,7 +385,6 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                 return false;
             }
-
             // TODO: Check variable name is not a keyword
             spy_var *var_check = find_var(vars, id);
             if (var_check != NULL)
@@ -320,7 +397,6 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 print_line(lexer, var_check->where, var_check->where_last);
                 return false;
             }
-
             spy_var var = {
                 .name = id,
                 .where = id_where,
@@ -328,6 +404,15 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 .index = *local_variables_count,
             };
             nob_da_append(vars, var);
+            spy_op_assign op_assign = {
+                .var_index = *local_variables_count,
+                .expr = expression,
+            };
+            spy_op_stmt op = {
+                .type = SPY_OP_assign,
+                .data.assign = op_assign,
+            };
+            nob_da_append(ops, op);
         }
         else
         {
@@ -351,7 +436,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
     return true;
 }
 
-bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, Nob_String_Builder *output)
+bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_ops_function *ops)
 {
     // def
     if (!expect_id(lexer, file_path, "def"))
@@ -361,8 +446,7 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, Nob_Strin
     p_lexer_get_token(lexer);
     if (!expect_plex(lexer, file_path, PLEX_id))
         return false;
-    nob_sb_appendf(output, "_%s:\n", lexer->string);
-    nob_sb_appendf(output, "    push %%rbp\n");
+    ops->name = strdup(lexer->string);
 
     p_lexer_get_token(lexer);
     if (!expect_plex(lexer, file_path, '('))
@@ -384,7 +468,7 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, Nob_Strin
     size_t local_variables_count = 0;
     while (lexer->token != '}')
     {
-        if (!parse_statement(lexer, file_path, vars, &local_variables_count, output))
+        if (!parse_statement(lexer, file_path, vars, &local_variables_count, ops))
             return false;
         p_lexer_get_token(lexer);
     }
@@ -392,8 +476,99 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, Nob_Strin
     // End of statement
     if (!expect_plex(lexer, file_path, '}'))
         return false;
+    return true;
+}
 
-    nob_sb_appendf(output, "    mov $0, %%eax\n");
+void dump_ops(spy_ops *ops)
+{
+    for (size_t i = 0; i < ops->count; i++)
+    {
+        spy_ops_function op_function = ops->items[i];
+        printf("function %s() {\n", op_function.name);
+        for (size_t j = 0; j < op_function.count; j++)
+        {
+            spy_op_stmt op_stmt = op_function.items[j];
+            switch (op_stmt.type)
+            {
+            case SPY_OP_assign:
+            {
+                spy_op_assign *assign = &op_stmt.data.assign;
+                spy_op_expression *expr = &assign->expr;
+                if (expr->type == SPY_OP_EXPR_intlit)
+                {
+                    printf("    var_%ld = %ld;\n", assign->var_index, expr->data.intlit);
+                }
+                else if (expr->type == SPY_OP_EXPR_var)
+                {
+                    printf("    var_%ld = var_%ld;\n", assign->var_index, expr->data.rhs_index);
+                }
+                break;
+            }
+            case SPY_OP_func_call:
+            {
+                spy_op_func_call func_call = op_stmt.data.func_call;
+                printf("    %s(var_%ld);\n", func_call.name, func_call.var_index);
+                break;
+            }
+            }
+        }
+        printf("}\n");
+    }
+}
+
+bool compile_file_header(Nob_String_Builder *output)
+{
+    nob_sb_appendf(output, "    .globl _main\n");
+    return true;
+}
+
+bool compile_file_footer()
+{
+    return true;
+}
+
+bool compile_statement(spy_op_stmt *op, Nob_String_Builder *output)
+{
+    switch (op->type)
+    {
+    case SPY_OP_assign:
+    {
+        spy_op_assign *assign = &op->data.assign;
+        spy_op_expression *expr = &assign->expr;
+        if (expr->type == SPY_OP_EXPR_intlit)
+        {
+            nob_sb_appendf(output, "    movl $%ld, -%ld(%%rbp)\n", expr->data.intlit, assign->var_index * 4);
+        }
+        else if (expr->type == SPY_OP_EXPR_var)
+        {
+            nob_sb_appendf(output, "    movl -%ld(%%rbp), %%eax\n", expr->data.rhs_index * 4);
+            nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
+        }
+        break;
+    }
+    case SPY_OP_func_call:
+    {
+        spy_op_func_call *func_call = &op->data.func_call;
+        nob_sb_appendf(output, "    movl -%ld(%%rbp), %%edi\n", func_call->var_index * 4);
+        nob_sb_appendf(output, "    call _putchar\n");
+        break;
+    }
+    }
+    return true;
+}
+
+bool compile_function_body(spy_ops_function *ops, Nob_String_Builder *output)
+{
+    nob_sb_appendf(output, "_%s:\n", ops->name);
+    nob_sb_appendf(output, "    push %%rbp\n");
+    for (size_t i = 0; i < ops->count; i++)
+    {
+        spy_op_stmt *op = ops->items + i;
+        if (!compile_statement(op, output))
+            return false;
+    }
+    // TODO proper return
+    nob_sb_appendf(output, "    movl $0, %%eax\n");
     nob_sb_appendf(output, "    pop %%rbp\n");
     nob_sb_appendf(output, "    ret\n");
     return true;
@@ -434,14 +609,29 @@ int main(int argc, char **argv)
 
     p_lexer_init(&lexer, sb.items, sb.items + sb.count, string_store, sizeof string_store);
 
-    Nob_String_Builder output = {0};
-
     spy_vars vars = {0};
 
-    p_lexer_get_token(&lexer);
-    nob_sb_appendf(&output, "    .globl _main\n");
+    spy_ops ops = {0};
 
-    if (!parse_function(&lexer, *file_path, &vars, &output))
+    p_lexer_get_token(&lexer);
+    // TODO: turn into while loop to parse multiple files
+    spy_ops_function op_function = {0};
+    if (!parse_function(&lexer, *file_path, &vars, &op_function))
+        return 1;
+    nob_da_append(&ops, op_function);
+
+    dump_ops(&ops);
+
+    Nob_String_Builder output = {0};
+
+    if (!compile_file_header(&output))
+        return 1;
+    for (size_t i = 0; i < ops.count; i++)
+    {
+        if (!compile_function_body(&ops.items[i], &output))
+            return 1;
+    }
+    if (!compile_file_footer())
         return 1;
 
     if (!nob_write_entire_file(*output_path, output.items, output.count))
@@ -450,5 +640,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    nob_sb_free(sb);
+    nob_sb_free(output);
+    nob_da_free(vars);
+    nob_da_free(ops);
     return 0;
 }
