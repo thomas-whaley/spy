@@ -1,5 +1,5 @@
 def main() -> None {
     temp_a: int = 69;
-    temp_b: int = temp_a;
-    print(temp_a);
+    temp_b: int = temp_a + 1;
+    print(temp_b);
 }

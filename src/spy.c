@@ -200,7 +200,20 @@ enum spy_op_expression_type
 {
     SPY_OP_EXPR_intlit,
     SPY_OP_EXPR_var,
+    SPY_OP_EXPR_binop,
 };
+
+enum spy_op_expr_binop_type
+{
+    SPY_OP_EXPR_BINOP_add,
+};
+
+typedef struct
+{
+    enum spy_op_expr_binop_type type;
+    size_t lhs_var_index;
+    size_t rhs_var_index;
+} spy_op_expr_binop;
 
 typedef struct
 {
@@ -209,6 +222,7 @@ typedef struct
     {
         size_t rhs_index;
         long intlit;
+        spy_op_expr_binop binop;
     } data;
 } spy_op_expression;
 
@@ -261,7 +275,7 @@ bool is_keyword(char *name)
     return false;
 }
 
-bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_expression *expression)
+bool parse_expression_atomic(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_expression *expression)
 {
     if (lexer->token == PLEX_intlit)
     {
@@ -292,6 +306,60 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_
     return true;
 }
 
+bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_ops_function *ops, spy_op_expression *expression)
+{
+    spy_op_expression lhs = {0};
+    if (!parse_expression_atomic(lexer, file_path, vars, &lhs))
+        return false;
+    expression->type = lhs.type;
+    expression->data = lhs.data;
+    char *old_parse_point = lexer->parse_point;
+    p_lexer_get_token(lexer);
+    if (lexer->token == '+')
+    {
+        (*local_variables_count)++;
+        spy_op_assign assign_lhs = {
+            .var_index = *local_variables_count,
+            .expr = lhs,
+        };
+        spy_op_stmt stmt_lhs = {
+            .type = SPY_OP_assign,
+            .data.assign = assign_lhs,
+        };
+        nob_da_append(ops, stmt_lhs);
+        p_lexer_get_token(lexer);
+        spy_op_expression rhs = {0};
+        if (!parse_expression_atomic(lexer, file_path, vars, &rhs))
+            return false;
+        if (rhs.type == SPY_OP_EXPR_intlit)
+        {
+            (*local_variables_count)++;
+            spy_op_assign assign_rhs = {
+                .var_index = *local_variables_count,
+                .expr = rhs,
+            };
+            spy_op_stmt stmt_lhs = {
+                .type = SPY_OP_assign,
+                .data.assign = assign_rhs,
+            };
+            nob_da_append(ops, stmt_lhs);
+        }
+        spy_op_expr_binop binop = {
+            .type = SPY_OP_EXPR_BINOP_add,
+            .lhs_var_index = (*local_variables_count) - 1,
+            .rhs_var_index = (*local_variables_count),
+        };
+        expression->type = SPY_OP_EXPR_binop;
+        expression->data.binop = binop;
+    }
+    else
+    {
+        lexer->parse_point = old_parse_point;
+    }
+
+    return true;
+}
+
 bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_ops_function *ops)
 {
     if (lexer->token == PLEX_id)
@@ -316,7 +384,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             (*local_variables_count)++;
             p_lexer_get_token(lexer);
             spy_op_expression expression = {0};
-            if (!parse_expression(lexer, file_path, vars, &expression))
+            if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &expression))
                 return false;
             spy_op_assign assign = {
                 .var_index = *local_variables_count,
@@ -362,11 +430,10 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             p_lexer_get_token(lexer);
             if (!expect_plex(lexer, file_path, '='))
                 return false;
-            (*local_variables_count)++;
             // Expression
             p_lexer_get_token(lexer);
             spy_op_expression expression = {0};
-            if (!parse_expression(lexer, file_path, vars, &expression))
+            if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &expression))
                 return false;
             // TODO: Check variable name is not a keyword
             spy_var *var_check = find_var(vars, id);
@@ -380,6 +447,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 print_line(lexer, var_check->where, var_check->where_last);
                 return false;
             }
+            (*local_variables_count)++;
             spy_var var = {
                 .name = id,
                 .where = id_where,
@@ -492,6 +560,26 @@ enum spy_output_target get_target(char *target_string)
     return -1;
 }
 
+bool compile_dump_ir_expression(spy_op_expression *expr, Nob_String_Builder *output)
+{
+    if (expr->type == SPY_OP_EXPR_intlit)
+    {
+        nob_sb_appendf(output, "(int literal) %ld", expr->data.intlit);
+    }
+    else if (expr->type == SPY_OP_EXPR_var)
+    {
+        nob_sb_appendf(output, "var_%ld", expr->data.rhs_index);
+    }
+    else if (expr->type == SPY_OP_EXPR_binop)
+    {
+        if (expr->data.binop.type == SPY_OP_EXPR_BINOP_add)
+        {
+            nob_sb_appendf(output, "var_%ld + var_%ld", expr->data.binop.lhs_var_index, expr->data.binop.rhs_var_index);
+        }
+    }
+    return true;
+}
+
 bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
 {
     nob_sb_appendf(output, "OPS (count: %zu)\n", ops->count);
@@ -508,14 +596,10 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
             {
                 spy_op_assign *assign = &op_stmt.data.assign;
                 spy_op_expression *expr = &assign->expr;
-                if (expr->type == SPY_OP_EXPR_intlit)
-                {
-                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_int_lit [ var_%ld = %ld ]\n", assign->var_index, expr->data.intlit);
-                }
-                else if (expr->type == SPY_OP_EXPR_var)
-                {
-                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_var [ var_%ld = var_%ld ]\n", assign->var_index, expr->data.rhs_index);
-                }
+                nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN [ var_%ld = ", assign->var_index);
+                if (!compile_dump_ir_expression(expr, output))
+                    return false;
+                nob_sb_appendf(output, " ]\n");
                 break;
             }
             case SPY_OP_func_call:
@@ -527,6 +611,26 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
             }
         }
         nob_sb_appendf(output, "}\n");
+    }
+    return true;
+}
+
+bool compile_python311_expression(spy_op_expression *expr, Nob_String_Builder *output)
+{
+    if (expr->type == SPY_OP_EXPR_intlit)
+    {
+        nob_sb_appendf(output, "%ld", expr->data.intlit);
+    }
+    else if (expr->type == SPY_OP_EXPR_var)
+    {
+        nob_sb_appendf(output, "var_%ld", expr->data.rhs_index);
+    }
+    else if (expr->type == SPY_OP_EXPR_binop)
+    {
+        if (expr->data.binop.type == SPY_OP_EXPR_BINOP_add)
+        {
+            nob_sb_appendf(output, "var_%ld + var_%ld", expr->data.binop.lhs_var_index, expr->data.binop.rhs_var_index);
+        }
     }
     return true;
 }
@@ -546,14 +650,10 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
             {
                 spy_op_assign *assign = &op_stmt.data.assign;
                 spy_op_expression *expr = &assign->expr;
-                if (expr->type == SPY_OP_EXPR_intlit)
-                {
-                    nob_sb_appendf(output, "    var_%ld: int = %ld\n", assign->var_index, expr->data.intlit);
-                }
-                else if (expr->type == SPY_OP_EXPR_var)
-                {
-                    nob_sb_appendf(output, "    var_%ld: int = var_%ld\n", assign->var_index, expr->data.rhs_index);
-                }
+                nob_sb_appendf(output, "    var_%ld = ", assign->var_index);
+                if (!compile_python311_expression(expr, output))
+                    return false;
+                nob_sb_appendf(output, "\n");
                 break;
             }
             case SPY_OP_func_call:
@@ -595,6 +695,15 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
         else if (expr->type == SPY_OP_EXPR_var)
         {
             nob_sb_appendf(output, "    movl -%ld(%%rbp), %%eax\n", expr->data.rhs_index * 4);
+            nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
+        }
+        else if (expr->type == SPY_OP_EXPR_binop)
+        {
+            if (expr->data.binop.type == SPY_OP_EXPR_BINOP_add)
+            {
+                nob_sb_appendf(output, "    movl -%ld(%%rbp), %%eax\n", expr->data.binop.lhs_var_index * 4);
+                nob_sb_appendf(output, "    addl -%ld(%%rbp), %%eax\n", expr->data.binop.rhs_var_index * 4);
+            }
             nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
         }
         break;
