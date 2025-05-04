@@ -479,12 +479,43 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_ops_f
     return true;
 }
 
-void dump_ops(spy_ops *ops)
+enum spy_output_target
 {
+    SPY_OUTPUT_TARGET_x86_64_macos,
+    SPY_OUTPUT_TARGET_aarch64_mac_m1,
+    SPY_OUTPUT_TARGET_python311,
+    SPY_OUTPUT_TARGET_dump_ir,
+};
+
+char *TARGET_STRINGS[] = {
+    "x86-64-macos",
+    "aarch64-mac-m1",
+    "python311",
+    "dump-ir",
+};
+
+enum spy_output_target get_target(char *target_string)
+{
+    for (size_t i = 0; i < sizeof TARGET_STRINGS / sizeof(char *); i++)
+    {
+        if (str_eq(target_string, TARGET_STRINGS[i]))
+            return (enum spy_output_target)i;
+    }
+    fprintf(stderr, "Invalid target `%s`! Supports\n", target_string);
+    for (size_t i = 0; i < sizeof TARGET_STRINGS / sizeof(char *); i++)
+    {
+        fprintf(stderr, "    %s\n", TARGET_STRINGS[i]);
+    }
+    return -1;
+}
+
+void compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
+{
+    nob_sb_appendf(output, "OPS (count: %zu)\n", ops->count);
     for (size_t i = 0; i < ops->count; i++)
     {
         spy_ops_function op_function = ops->items[i];
-        printf("function %s() {\n", op_function.name);
+        nob_sb_appendf(output, "FUNCTION `%s` (count: %zu) {\n", op_function.name, op_function.count);
         for (size_t j = 0; j < op_function.count; j++)
         {
             spy_op_stmt op_stmt = op_function.items[j];
@@ -496,38 +527,38 @@ void dump_ops(spy_ops *ops)
                 spy_op_expression *expr = &assign->expr;
                 if (expr->type == SPY_OP_EXPR_intlit)
                 {
-                    printf("    var_%ld = %ld;\n", assign->var_index, expr->data.intlit);
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_int_lit [ var_%ld = %ld ]\n", assign->var_index, expr->data.intlit);
                 }
                 else if (expr->type == SPY_OP_EXPR_var)
                 {
-                    printf("    var_%ld = var_%ld;\n", assign->var_index, expr->data.rhs_index);
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_var [ var_%ld = %ld ]\n", assign->var_index, expr->data.rhs_index);
                 }
                 break;
             }
             case SPY_OP_func_call:
             {
                 spy_op_func_call func_call = op_stmt.data.func_call;
-                printf("    %s(var_%ld);\n", func_call.name, func_call.var_index);
+                nob_sb_appendf(output, "    OP_STATEMENT_FUNCTION_CALL [ %s(var_%ld) ] \n", func_call.name, func_call.var_index);
                 break;
             }
             }
         }
-        printf("}\n");
+        nob_sb_appendf(output, "}\n");
     }
 }
 
-bool compile_file_header(Nob_String_Builder *output)
+bool compile_x86_64_macos_file_header(Nob_String_Builder *output)
 {
     nob_sb_appendf(output, "    .globl _main\n");
     return true;
 }
 
-bool compile_file_footer()
+bool compile_x86_64_macos_file_footer()
 {
     return true;
 }
 
-bool compile_statement(spy_op_stmt *op, Nob_String_Builder *output)
+bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
 {
     switch (op->type)
     {
@@ -557,14 +588,14 @@ bool compile_statement(spy_op_stmt *op, Nob_String_Builder *output)
     return true;
 }
 
-bool compile_function_body(spy_ops_function *ops, Nob_String_Builder *output)
+bool compile_x86_64_macos_function_body(spy_ops_function *ops, Nob_String_Builder *output)
 {
     nob_sb_appendf(output, "_%s:\n", ops->name);
     nob_sb_appendf(output, "    push %%rbp\n");
     for (size_t i = 0; i < ops->count; i++)
     {
         spy_op_stmt *op = ops->items + i;
-        if (!compile_statement(op, output))
+        if (!compile_x86_64_macos_statement(op, output))
             return false;
     }
     // TODO proper return
@@ -574,10 +605,45 @@ bool compile_function_body(spy_ops_function *ops, Nob_String_Builder *output)
     return true;
 }
 
+bool compile_x86_64_macos(spy_ops *ops, Nob_String_Builder *output)
+{
+    if (!compile_x86_64_macos_file_header(output))
+        return false;
+    for (size_t i = 0; i < ops->count; i++)
+    {
+        if (!compile_x86_64_macos_function_body(&ops->items[i], output))
+            return false;
+    }
+    if (!compile_x86_64_macos_file_footer())
+        return false;
+    return true;
+}
+
+bool compile(spy_ops *ops, Nob_String_Builder *output, enum spy_output_target target)
+{
+    switch (target)
+    {
+    case SPY_OUTPUT_TARGET_x86_64_macos:
+        compile_x86_64_macos(ops, output);
+        break;
+    case SPY_OUTPUT_TARGET_dump_ir:
+        compile_dump_ir(ops, output);
+        break;
+    case SPY_OUTPUT_TARGET_aarch64_mac_m1:
+        fprintf(stderr, "Target `aarch64-mac-m1` is not supported yet!\n");
+        return false;
+    case SPY_OUTPUT_TARGET_python311:
+        fprintf(stderr, "Target `python311` is not supported yet!\n");
+        return false;
+    }
+    return true;
+}
+
 int main(int argc, char **argv)
 {
     char **file_path = flag_str("path", NULL, "Path to the input spy file (MANDATORY)");
     char **output_path = flag_str("o", NULL, "Path to the output file (MANDATORY)");
+    char **output_target = flag_str("target", NULL, "Target compilation output");
 
     if (!flag_parse(argc, argv))
     {
@@ -600,6 +666,15 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (*output_target == NULL)
+    {
+        output_target = &TARGET_STRINGS[0];
+    }
+
+    enum spy_output_target target = get_target(*output_target);
+    if (target < 0)
+        return 1;
+
     Nob_String_Builder sb = {0};
 
     nob_read_entire_file(*file_path, &sb);
@@ -620,19 +695,9 @@ int main(int argc, char **argv)
         return 1;
     nob_da_append(&ops, op_function);
 
-    dump_ops(&ops);
-
     Nob_String_Builder output = {0};
 
-    if (!compile_file_header(&output))
-        return 1;
-    for (size_t i = 0; i < ops.count; i++)
-    {
-        if (!compile_function_body(&ops.items[i], &output))
-            return 1;
-    }
-    if (!compile_file_footer())
-        return 1;
+    compile(&ops, &output, target);
 
     if (!nob_write_entire_file(*output_path, output.items, output.count))
     {
