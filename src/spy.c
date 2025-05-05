@@ -551,20 +551,24 @@ char *TARGET_STRINGS[] = {
 
 bool compile_dump_ir_expression(spy_op_expression *expr, Nob_String_Builder *output)
 {
-    if (expr->type == SPY_OP_EXPR_intlit)
+    switch (expr->type)
     {
+    case SPY_OP_EXPR_intlit:
         nob_sb_appendf(output, "(int literal) %ld", expr->data.intlit);
-    }
-    else if (expr->type == SPY_OP_EXPR_var)
-    {
+        break;
+    case SPY_OP_EXPR_var:
         nob_sb_appendf(output, "var_%ld", expr->data.rhs_index);
-    }
-    else if (expr->type == SPY_OP_EXPR_binop)
+        break;
+    case SPY_OP_EXPR_binop:
     {
-        if (expr->data.binop.type == SPY_OP_EXPR_BINOP_add)
+        switch (expr->data.binop.type)
         {
+        case SPY_OP_EXPR_BINOP_add:
             nob_sb_appendf(output, "var_%ld + var_%ld", expr->data.binop.lhs_var_index, expr->data.binop.rhs_var_index);
-        }
+            break;
+        };
+        break;
+    }
     }
     return true;
 }
@@ -606,20 +610,24 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
 
 bool compile_python311_expression(spy_op_expression *expr, Nob_String_Builder *output)
 {
-    if (expr->type == SPY_OP_EXPR_intlit)
+    switch (expr->type)
     {
+    case SPY_OP_EXPR_intlit:
         nob_sb_appendf(output, "%ld", expr->data.intlit);
-    }
-    else if (expr->type == SPY_OP_EXPR_var)
-    {
+        break;
+    case SPY_OP_EXPR_var:
         nob_sb_appendf(output, "var_%ld", expr->data.rhs_index);
-    }
-    else if (expr->type == SPY_OP_EXPR_binop)
+        break;
+    case SPY_OP_EXPR_binop:
     {
-        if (expr->data.binop.type == SPY_OP_EXPR_BINOP_add)
+        switch (expr->data.binop.type)
         {
+        case SPY_OP_EXPR_BINOP_add:
             nob_sb_appendf(output, "var_%ld + var_%ld", expr->data.binop.lhs_var_index, expr->data.binop.rhs_var_index);
+            break;
         }
+        break;
+    }
     }
     return true;
 }
@@ -677,23 +685,27 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
     {
         spy_op_assign *assign = &op->data.assign;
         spy_op_expression *expr = &assign->expr;
-        if (expr->type == SPY_OP_EXPR_intlit)
+        switch (expr->type)
         {
+        case SPY_OP_EXPR_intlit:
             nob_sb_appendf(output, "    movl $%ld, -%ld(%%rbp)\n", expr->data.intlit, assign->var_index * 4);
-        }
-        else if (expr->type == SPY_OP_EXPR_var)
-        {
+            break;
+        case SPY_OP_EXPR_var:
             nob_sb_appendf(output, "    movl -%ld(%%rbp), %%eax\n", expr->data.rhs_index * 4);
             nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
-        }
-        else if (expr->type == SPY_OP_EXPR_binop)
+            break;
+        case SPY_OP_EXPR_binop:
         {
-            if (expr->data.binop.type == SPY_OP_EXPR_BINOP_add)
+            switch (expr->data.binop.type)
             {
+            case SPY_OP_EXPR_BINOP_add:
                 nob_sb_appendf(output, "    movl -%ld(%%rbp), %%eax\n", expr->data.binop.lhs_var_index * 4);
                 nob_sb_appendf(output, "    addl -%ld(%%rbp), %%eax\n", expr->data.binop.rhs_var_index * 4);
+                break;
             }
             nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
+            break;
+        }
         }
         break;
     }
@@ -883,7 +895,8 @@ int main(int argc, char **argv)
 
     Nob_String_Builder output = {0};
 
-    compile(&ops, &output, target);
+    if (!compile(&ops, &output, target))
+        return 1;
 
     if (!nob_write_entire_file(*output_path, output.items, output.count))
     {
