@@ -263,6 +263,14 @@ bool is_keyword(char *name)
 
 bool parse_expression_atomic(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_expression *expression)
 {
+    // Get compiler error to add new types here
+    switch (expression->type)
+    {
+    case SPY_OP_EXPR_intlit:
+    case SPY_OP_EXPR_var:
+    case SPY_OP_EXPR_binop:
+        break;
+    }
     if (lexer->token == PLEX_intlit)
     {
         expression->type = SPY_OP_EXPR_intlit;
@@ -294,6 +302,14 @@ bool parse_expression_atomic(stb_lexer *lexer, char *file_path, spy_vars *vars, 
 
 void parse_maybe_create_var_index(spy_op_expression *expr, size_t *local_variables_count, spy_ops_function *ops)
 {
+    // Get compiler error to add new types here
+    switch (expr->type)
+    {
+    case SPY_OP_EXPR_intlit:
+    case SPY_OP_EXPR_var:
+    case SPY_OP_EXPR_binop:
+        break;
+    }
     if (expr->type == SPY_OP_EXPR_intlit)
     {
         (*local_variables_count)++;
@@ -341,6 +357,12 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
             .lhs_var_index = lhs_var_index,
             .rhs_var_index = rhs_var_index,
         };
+        // Get compiler error to add new types here
+        switch (binop.type)
+        {
+        case SPY_OP_EXPR_BINOP_add:
+            break;
+        }
         expression->type = SPY_OP_EXPR_binop;
         expression->data.binop = binop;
 
@@ -405,6 +427,13 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 .type = SPY_OP_func_call,
                 .data.func_call = op_func_call,
             };
+            // Get compiler error to add new types here
+            switch (op.type)
+            {
+            case SPY_OP_assign:
+            case SPY_OP_func_call:
+                break;
+            }
             nob_da_append(ops, op);
         }
         else if (lexer->token == ':')
@@ -463,6 +492,13 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 .type = SPY_OP_assign,
                 .data.assign = op_assign,
             };
+            // Get compiler error to add new types here
+            switch (op.type)
+            {
+            case SPY_OP_assign:
+            case SPY_OP_func_call:
+                break;
+            }
             nob_da_append(ops, op);
         }
         else
