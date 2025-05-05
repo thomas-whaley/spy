@@ -240,12 +240,17 @@ typedef struct
     spy_op_stmt *items;
     size_t count;
     size_t capacity;
-    char *name;
-} spy_ops_function;
+} spy_op_stmts;
 
 typedef struct
 {
-    spy_ops_function *items;
+    spy_op_stmts stmts;
+    char *name;
+} spy_op_function;
+
+typedef struct
+{
+    spy_op_function *items;
     size_t count;
     size_t capacity;
 } spy_ops;
@@ -301,7 +306,7 @@ bool parse_expression_atomic(stb_lexer *lexer, char *file_path, spy_vars *vars, 
     return true;
 }
 
-void parse_maybe_create_var_index(spy_op_expression *expr, size_t *local_variables_count, spy_ops_function *ops)
+void parse_maybe_create_var_index(spy_op_expression *expr, size_t *local_variables_count, spy_op_stmts *ops)
 {
     // Get compiler error to add new types here
     switch (expr->type)
@@ -326,7 +331,7 @@ void parse_maybe_create_var_index(spy_op_expression *expr, size_t *local_variabl
     }
 }
 
-bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_ops_function *ops, spy_op_expression *expression)
+bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_expression *expression)
 {
     spy_op_expression lhs = {0};
     if (!parse_expression_atomic(lexer, file_path, vars, &lhs))
@@ -393,7 +398,7 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
     return true;
 }
 
-bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_ops_function *ops)
+bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops)
 {
     if (lexer->token == PLEX_id)
     {
@@ -526,7 +531,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
     return true;
 }
 
-bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_ops_function *ops)
+bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_function *op_func)
 {
     // def
     if (!expect_id(lexer, file_path, "def"))
@@ -536,7 +541,7 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_ops_f
     p_lexer_get_token(lexer);
     if (!expect_plex(lexer, file_path, PLEX_id))
         return false;
-    ops->name = strdup(lexer->string);
+    op_func->name = strdup(lexer->string);
 
     p_lexer_get_token(lexer);
     if (!expect_plex(lexer, file_path, '('))
@@ -558,7 +563,7 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_ops_f
     size_t local_variables_count = 0;
     while (lexer->token != '}')
     {
-        if (!parse_statement(lexer, file_path, vars, &local_variables_count, ops))
+        if (!parse_statement(lexer, file_path, vars, &local_variables_count, &op_func->stmts))
             return false;
         p_lexer_get_token(lexer);
     }
@@ -620,11 +625,12 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
     nob_sb_appendf(output, "OPS (count: %zu)\n", ops->count);
     for (size_t i = 0; i < ops->count; i++)
     {
-        spy_ops_function op_function = ops->items[i];
-        nob_sb_appendf(output, "FUNCTION `%s` (count: %zu) {\n", op_function.name, op_function.count);
-        for (size_t j = 0; j < op_function.count; j++)
+        spy_op_function op_function = ops->items[i];
+        spy_op_stmts op_stmts = op_function.stmts;
+        nob_sb_appendf(output, "FUNCTION `%s` (count: %zu) {\n", op_function.name, op_stmts.count);
+        for (size_t j = 0; j < op_stmts.count; j++)
         {
-            spy_op_stmt op_stmt = op_function.items[j];
+            spy_op_stmt op_stmt = op_stmts.items[j];
             switch (op_stmt.type)
             {
             case SPY_OP_assign:
@@ -681,11 +687,12 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
 {
     for (size_t i = 0; i < ops->count; i++)
     {
-        spy_ops_function op_function = ops->items[i];
+        spy_op_function op_function = ops->items[i];
+        spy_op_stmts op_stmts = op_function.stmts;
         nob_sb_appendf(output, "def %s() -> None:\n", op_function.name);
-        for (size_t j = 0; j < op_function.count; j++)
+        for (size_t j = 0; j < op_stmts.count; j++)
         {
-            spy_op_stmt op_stmt = op_function.items[j];
+            spy_op_stmt op_stmt = op_stmts.items[j];
             switch (op_stmt.type)
             {
             case SPY_OP_assign:
@@ -769,13 +776,13 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
     return true;
 }
 
-bool compile_x86_64_macos_function_body(spy_ops_function *ops, Nob_String_Builder *output)
+bool compile_x86_64_macos_function_body(spy_op_function *ops, Nob_String_Builder *output)
 {
     nob_sb_appendf(output, "_%s:\n", ops->name);
     nob_sb_appendf(output, "    push %%rbp\n");
-    for (size_t i = 0; i < ops->count; i++)
+    for (size_t i = 0; i < ops->stmts.count; i++)
     {
-        spy_op_stmt *op = ops->items + i;
+        spy_op_stmt *op = ops->stmts.items + i;
         if (!compile_x86_64_macos_statement(op, output))
             return false;
     }
@@ -937,7 +944,7 @@ int main(int argc, char **argv)
 
     p_lexer_get_token(&lexer);
     // TODO: turn into while loop to parse multiple files
-    spy_ops_function op_function = {0};
+    spy_op_function op_function = {0};
     if (!parse_function(&lexer, file_path, &vars, &op_function))
         return 1;
     nob_da_append(&ops, op_function);
