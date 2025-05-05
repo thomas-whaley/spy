@@ -335,6 +335,41 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
         };
         expression->type = SPY_OP_EXPR_binop;
         expression->data.binop = binop;
+
+        while (true)
+        {
+            old_parse_point = lexer->parse_point;
+            p_lexer_get_token(lexer);
+            if (lexer->token != '+')
+            {
+                break;
+            }
+            p_lexer_get_token(lexer);
+            (*local_variables_count)++;
+            spy_op_assign op_assign = {
+                .var_index = *local_variables_count,
+                .expr = *expression,
+            };
+            spy_op_stmt op = {
+                .type = SPY_OP_assign,
+                .data.assign = op_assign,
+            };
+            nob_da_append(ops, op);
+            lhs_var_index = *local_variables_count;
+            spy_op_expression rhs = {0};
+            if (!parse_expression_atomic(lexer, file_path, vars, &rhs))
+                return false;
+            parse_maybe_create_var_index(&rhs, local_variables_count, ops);
+            size_t rhs_var_index = *local_variables_count;
+            spy_op_expr_binop binop = {
+                .type = SPY_OP_EXPR_BINOP_add,
+                .lhs_var_index = lhs_var_index,
+                .rhs_var_index = rhs_var_index,
+            };
+            expression->type = SPY_OP_EXPR_binop;
+            expression->data.binop = binop;
+        }
+        lexer->parse_point = old_parse_point;
     }
     else
     {
