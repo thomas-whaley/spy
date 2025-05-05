@@ -192,6 +192,7 @@ enum spy_op_expression_type
 enum spy_op_expr_binop_type
 {
     SPY_OP_EXPR_BINOP_add,
+    SPY_OP_EXPR_BINOP_sub,
 };
 
 typedef struct
@@ -335,7 +336,7 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
     char *old_parse_point = lexer->parse_point;
     p_lexer_get_token(lexer);
 
-    if (lexer->token != '+')
+    if (lexer->token != '+' && lexer->token != '-')
     {
         lexer->parse_point = old_parse_point;
         return true;
@@ -344,8 +345,9 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
     parse_maybe_create_var_index(&lhs, local_variables_count, ops);
     size_t lhs_var_index = *local_variables_count;
 
-    while (lexer->token == '+')
+    while (lexer->token == '+' || lexer->token == '-')
     {
+        long operator_token = lexer->token;
         p_lexer_get_token(lexer);
         spy_op_expression rhs = {0};
         if (!parse_expression_atomic(lexer, file_path, vars, &rhs))
@@ -353,7 +355,7 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
         parse_maybe_create_var_index(&rhs, local_variables_count, ops);
         size_t rhs_var_index = *local_variables_count;
         spy_op_expr_binop binop = {
-            .type = SPY_OP_EXPR_BINOP_add,
+            .type = operator_token == '+' ? SPY_OP_EXPR_BINOP_add : SPY_OP_EXPR_BINOP_sub,
             .lhs_var_index = lhs_var_index,
             .rhs_var_index = rhs_var_index,
         };
@@ -361,6 +363,7 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
         switch (binop.type)
         {
         case SPY_OP_EXPR_BINOP_add:
+        case SPY_OP_EXPR_BINOP_sub:
             break;
         }
         expression->type = SPY_OP_EXPR_binop;
@@ -368,7 +371,7 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
 
         old_parse_point = lexer->parse_point;
         p_lexer_get_token(lexer);
-        if (lexer->token != '+')
+        if (lexer->token != '+' && lexer->token != '-')
         {
             lexer->parse_point = old_parse_point;
             break;
@@ -602,6 +605,9 @@ bool compile_dump_ir_expression(spy_op_expression *expr, Nob_String_Builder *out
         case SPY_OP_EXPR_BINOP_add:
             nob_sb_appendf(output, "var_%ld + var_%ld", expr->data.binop.lhs_var_index, expr->data.binop.rhs_var_index);
             break;
+        case SPY_OP_EXPR_BINOP_sub:
+            nob_sb_appendf(output, "var_%ld - var_%ld", expr->data.binop.lhs_var_index, expr->data.binop.rhs_var_index);
+            break;
         };
         break;
     }
@@ -660,6 +666,9 @@ bool compile_python311_expression(spy_op_expression *expr, Nob_String_Builder *o
         {
         case SPY_OP_EXPR_BINOP_add:
             nob_sb_appendf(output, "var_%ld + var_%ld", expr->data.binop.lhs_var_index, expr->data.binop.rhs_var_index);
+            break;
+        case SPY_OP_EXPR_BINOP_sub:
+            nob_sb_appendf(output, "var_%ld - var_%ld", expr->data.binop.lhs_var_index, expr->data.binop.rhs_var_index);
             break;
         }
         break;
@@ -737,6 +746,10 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
             case SPY_OP_EXPR_BINOP_add:
                 nob_sb_appendf(output, "    movl -%ld(%%rbp), %%eax\n", expr->data.binop.lhs_var_index * 4);
                 nob_sb_appendf(output, "    addl -%ld(%%rbp), %%eax\n", expr->data.binop.rhs_var_index * 4);
+                break;
+            case SPY_OP_EXPR_BINOP_sub:
+                nob_sb_appendf(output, "    movl -%ld(%%rbp), %%eax\n", expr->data.binop.lhs_var_index * 4);
+                nob_sb_appendf(output, "    subl -%ld(%%rbp), %%eax\n", expr->data.binop.rhs_var_index * 4);
                 break;
             }
             nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
