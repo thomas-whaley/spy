@@ -197,6 +197,9 @@ enum spy_op_expr_binop_type
     SPY_OP_EXPR_BINOP_sub,
     SPY_OP_EXPR_BINOP_mul,
     SPY_OP_EXPR_BINOP_lt,
+    SPY_OP_EXPR_BINOP_gt,
+    SPY_OP_EXPR_BINOP_eq,
+    SPY_OP_EXPR_BINOP_neq,
 };
 
 typedef struct
@@ -274,41 +277,83 @@ bool is_keyword(char *name)
 
 #define NUM_PRECEDENCE_LEVELS 3
 
-const long BINOP_PRECEDENCE_TOKENS[][NUM_PRECEDENCE_LEVELS] = {
-    {'<'},
-    {'+', '-'},
-    {'*'},
-};
-
-const enum spy_op_expr_binop_type BINOP_PRECEDENCE_TYPES[][NUM_PRECEDENCE_LEVELS] = {
-    {SPY_OP_EXPR_BINOP_lt},
-    {SPY_OP_EXPR_BINOP_add, SPY_OP_EXPR_BINOP_sub},
-    {SPY_OP_EXPR_BINOP_mul},
-};
-
 bool token_is_at_binop_precedence(long token, size_t precedence_level)
 {
-    const long *tokens = BINOP_PRECEDENCE_TOKENS[precedence_level];
-    for (size_t i = 0; i < NUM_PRECEDENCE_LEVELS; i++)
+    // Get compiler error to add new types here
+    spy_op_assign_binop binop = {0};
+    switch (binop.type)
     {
-        if (tokens[i] == token)
-        {
-            return true;
-        }
+    case SPY_OP_EXPR_BINOP_add:
+    case SPY_OP_EXPR_BINOP_sub:
+    case SPY_OP_EXPR_BINOP_mul:
+    case SPY_OP_EXPR_BINOP_lt:
+    case SPY_OP_EXPR_BINOP_gt:
+    case SPY_OP_EXPR_BINOP_eq:
+    case SPY_OP_EXPR_BINOP_neq:
+        break;
     }
-    return false;
+    switch (precedence_level)
+    {
+    case 0:
+        return token == '<' || token == '>' || token == PLEX_eq || token == PLEX_noteq;
+    case 1:
+        return token == '+' || token == '-';
+    case 2:
+        return token == '*';
+    }
+    fprintf(stderr, "Unreachable. Please update the precedence tables. Trying to grab %s from precedence %zu\n", pretty_token(token), precedence_level);
+    exit(1);
 }
 
 enum spy_op_expr_binop_type expr_binop_type_from_token_precedence(long token, size_t precedence_level)
 {
-    const long *tokens = BINOP_PRECEDENCE_TOKENS[precedence_level];
-    const enum spy_op_expr_binop_type *types = BINOP_PRECEDENCE_TYPES[precedence_level];
-    for (size_t i = 0; i < NUM_PRECEDENCE_LEVELS; i++)
+    // Get compiler error to add new types here
+    spy_op_assign_binop binop = {0};
+    switch (binop.type)
     {
-        if (tokens[i] == token)
+    case SPY_OP_EXPR_BINOP_add:
+    case SPY_OP_EXPR_BINOP_sub:
+    case SPY_OP_EXPR_BINOP_mul:
+    case SPY_OP_EXPR_BINOP_lt:
+    case SPY_OP_EXPR_BINOP_gt:
+    case SPY_OP_EXPR_BINOP_eq:
+    case SPY_OP_EXPR_BINOP_neq:
+        break;
+    }
+    switch (precedence_level)
+    {
+    case 0:
+    {
+        switch (token)
         {
-            return types[i];
+        case '<':
+            return SPY_OP_EXPR_BINOP_lt;
+        case '>':
+            return SPY_OP_EXPR_BINOP_gt;
+        case PLEX_eq:
+            return SPY_OP_EXPR_BINOP_eq;
+        case PLEX_noteq:
+            return SPY_OP_EXPR_BINOP_neq;
         }
+    }
+    case 1:
+    {
+        switch (token)
+        {
+        case '+':
+            return SPY_OP_EXPR_BINOP_add;
+        case '-':
+            return SPY_OP_EXPR_BINOP_sub;
+        }
+    }
+    case 2:
+    {
+        switch (token)
+        {
+        case '*':
+            return SPY_OP_EXPR_BINOP_add;
+        }
+    }
     }
     fprintf(stderr, "Unreachable. Please update the precedence tables. Trying to grab %s from precedence %zu\n", pretty_token(token), precedence_level);
     exit(1);
@@ -392,15 +437,6 @@ bool parse_expression_precedence(stb_lexer *lexer, char *file_path, spy_vars *va
             if (!parse_expression_precedence(lexer, file_path, vars, local_variables_count, ops, &rhs, precedence_level + 1))
                 return false;
             binop.type = expr_binop_type_from_token_precedence(token, precedence_level);
-            // Get compiler error to add new types here
-            switch (binop.type)
-            {
-            case SPY_OP_EXPR_BINOP_add:
-            case SPY_OP_EXPR_BINOP_sub:
-            case SPY_OP_EXPR_BINOP_mul:
-            case SPY_OP_EXPR_BINOP_lt:
-                break;
-            }
             binop.lhs = lhs;
             binop.rhs = rhs;
             binop.var_index = index;
@@ -730,6 +766,15 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
                 case SPY_OP_EXPR_BINOP_lt:
                     nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_LT [ var_%ld, ", op_stmt.data.assign.var_index);
                     break;
+                case SPY_OP_EXPR_BINOP_gt:
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_GT [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_eq:
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_EQ [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_neq:
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_NEQ [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
                 }
                 if (!compile_dump_ir_term(&op_stmt.data.assign_binop.lhs, output))
                     return false;
@@ -754,6 +799,15 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
                     break;
                 case SPY_OP_EXPR_BINOP_lt:
                     nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_LT [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_gt:
+                    nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_GT [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_eq:
+                    nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_EQ [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_neq:
+                    nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_NEQ [ var_%ld, ", op_stmt.data.assign.var_index);
                     break;
                 }
                 if (!compile_dump_ir_term(&op_stmt.data.assign_binop.lhs, output))
@@ -845,6 +899,15 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
                 case SPY_OP_EXPR_BINOP_lt:
                     nob_sb_appendf(output, " < ");
                     break;
+                case SPY_OP_EXPR_BINOP_gt:
+                    nob_sb_appendf(output, " > ");
+                    break;
+                case SPY_OP_EXPR_BINOP_eq:
+                    nob_sb_appendf(output, " == ");
+                    break;
+                case SPY_OP_EXPR_BINOP_neq:
+                    nob_sb_appendf(output, " != ");
+                    break;
                 }
                 if (!compile_dump_python311_term(&op_stmt.data.assign_binop.rhs, output))
                     return false;
@@ -869,6 +932,15 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
                     break;
                 case SPY_OP_EXPR_BINOP_lt:
                     nob_sb_appendf(output, " < ");
+                    break;
+                case SPY_OP_EXPR_BINOP_gt:
+                    nob_sb_appendf(output, " > ");
+                    break;
+                case SPY_OP_EXPR_BINOP_eq:
+                    nob_sb_appendf(output, " == ");
+                    break;
+                case SPY_OP_EXPR_BINOP_neq:
+                    nob_sb_appendf(output, " != ");
                     break;
                 }
                 if (!compile_dump_python311_term(&op_stmt.data.assign_binop.rhs, output))
@@ -979,6 +1051,9 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
             break;
         }
         case SPY_OP_EXPR_BINOP_lt:
+        case SPY_OP_EXPR_BINOP_gt:
+        case SPY_OP_EXPR_BINOP_eq:
+        case SPY_OP_EXPR_BINOP_neq:
         {
             // Use ecx as temporary register, not ebx, because ebx causes segfault on my machine.
             nob_sb_appendf(output, "    xor %%ecx,  %%ecx\n");
@@ -991,7 +1066,24 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
                 nob_sb_appendf(output, "    cmp -%ld(%%rbp), %%eax\n", assign->rhs.data.var_index * 4);
                 break;
             }
-            nob_sb_appendf(output, "    setl %%cl\n");
+            switch (assign->type)
+            {
+            case SPY_OP_EXPR_BINOP_add:
+            case SPY_OP_EXPR_BINOP_sub:
+            case SPY_OP_EXPR_BINOP_mul:
+            case SPY_OP_EXPR_BINOP_lt:
+                nob_sb_appendf(output, "    setl %%cl\n");
+                break;
+            case SPY_OP_EXPR_BINOP_gt:
+                nob_sb_appendf(output, "    setg %%cl\n");
+                break;
+            case SPY_OP_EXPR_BINOP_eq:
+                nob_sb_appendf(output, "    sete %%cl\n");
+                break;
+            case SPY_OP_EXPR_BINOP_neq:
+                nob_sb_appendf(output, "    setne %%cl\n");
+                break;
+            }
             nob_sb_appendf(output, "    movl %%ecx, %%eax\n");
             break;
         }
