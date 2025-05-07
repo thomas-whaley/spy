@@ -148,6 +148,7 @@ bool expect_id(stb_lexer *lexer, char *file_path, char *compare_string)
 char *KEYWORDS[] = {
     "def",
     "while",
+    "if",
 };
 
 typedef struct
@@ -548,10 +549,47 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 // print_line(lexer, id_where, id_where_last);
                 // return false;
             }
+            if (str_eq(id, "if"))
+            {
+                size_t start_block_index = ops->count;
+                spy_op_stmt op = {
+                    .type = SPY_OP_block_mark_start,
+                    .data.jump = {
+                        .index = start_block_index,
+                    },
+                };
+                nob_da_append(ops, op);
+                spy_op_term term = {0};
+                if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &term))
+                    return false;
+                p_lexer_get_token(lexer);
+                if (!expect_plex(lexer, file_path, '{'))
+                    return false;
+                size_t replace_conditional_jump_index_index = ops->count;
+                op.type = SPY_OP_conditional_jump;
+                nob_da_append(ops, op);
+                p_lexer_get_token(lexer);
+                while (lexer->token != '}')
+                {
+                    if (!parse_statement(lexer, file_path, vars, local_variables_count, ops))
+                        return false;
+                    p_lexer_get_token(lexer);
+                }
+                size_t end_block_index = ops->count;
+                op.type = SPY_OP_block_mark_end;
+                op.data.jump.index = end_block_index;
+                nob_da_append(ops, op);
+                (ops->items + replace_conditional_jump_index_index)->data.jump.index = end_block_index;
+
+                // print_loc(lexer, file_path, id_where);
+                // fprintf(stderr, ": ERROR: While loops are currently unsupported.\n");
+                // print_line(lexer, id_where, id_where_last);
+                // return false;
+            }
             else
             {
                 print_loc(lexer, file_path, id_where);
-                fprintf(stderr, ": ERROR: Invalid statement! Unexpected keyword!\n");
+                fprintf(stderr, ": ERROR: Invalid statement. Unexpected keyword!\n");
                 print_line(lexer, id_where, id_where_last);
                 return false;
             }
