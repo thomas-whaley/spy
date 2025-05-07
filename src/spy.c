@@ -196,6 +196,7 @@ enum spy_op_expr_binop_type
     SPY_OP_EXPR_BINOP_add,
     SPY_OP_EXPR_BINOP_sub,
     SPY_OP_EXPR_BINOP_mul,
+    SPY_OP_EXPR_BINOP_lt,
 };
 
 typedef struct
@@ -271,14 +272,16 @@ bool is_keyword(char *name)
     return false;
 }
 
-#define NUM_PRECEDENCE_LEVELS 2
+#define NUM_PRECEDENCE_LEVELS 3
 
-const long BINOP_PRECEDENCE_TOKENS[NUM_PRECEDENCE_LEVELS][2] = {
+const long BINOP_PRECEDENCE_TOKENS[][NUM_PRECEDENCE_LEVELS] = {
+    {'<'},
     {'+', '-'},
     {'*'},
 };
 
-const enum spy_op_expr_binop_type BINOP_PRECEDENCE_TYPES[][2] = {
+const enum spy_op_expr_binop_type BINOP_PRECEDENCE_TYPES[][NUM_PRECEDENCE_LEVELS] = {
+    {SPY_OP_EXPR_BINOP_lt},
     {SPY_OP_EXPR_BINOP_add, SPY_OP_EXPR_BINOP_sub},
     {SPY_OP_EXPR_BINOP_mul},
 };
@@ -395,6 +398,7 @@ bool parse_expression_precedence(stb_lexer *lexer, char *file_path, spy_vars *va
             case SPY_OP_EXPR_BINOP_add:
             case SPY_OP_EXPR_BINOP_sub:
             case SPY_OP_EXPR_BINOP_mul:
+            case SPY_OP_EXPR_BINOP_lt:
                 break;
             }
             binop.lhs = lhs;
@@ -723,6 +727,9 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
                 case SPY_OP_EXPR_BINOP_mul:
                     nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_MUL [ var_%ld, ", op_stmt.data.assign.var_index);
                     break;
+                case SPY_OP_EXPR_BINOP_lt:
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_LT [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
                 }
                 if (!compile_dump_ir_term(&op_stmt.data.assign_binop.lhs, output))
                     return false;
@@ -744,6 +751,9 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
                     break;
                 case SPY_OP_EXPR_BINOP_mul:
                     nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_MUL [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_lt:
+                    nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_LT [ var_%ld, ", op_stmt.data.assign.var_index);
                     break;
                 }
                 if (!compile_dump_ir_term(&op_stmt.data.assign_binop.lhs, output))
@@ -832,6 +842,9 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
                 case SPY_OP_EXPR_BINOP_mul:
                     nob_sb_appendf(output, " * ");
                     break;
+                case SPY_OP_EXPR_BINOP_lt:
+                    nob_sb_appendf(output, " < ");
+                    break;
                 }
                 if (!compile_dump_python311_term(&op_stmt.data.assign_binop.rhs, output))
                     return false;
@@ -853,6 +866,9 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
                     break;
                 case SPY_OP_EXPR_BINOP_mul:
                     nob_sb_appendf(output, " * ");
+                    break;
+                case SPY_OP_EXPR_BINOP_lt:
+                    nob_sb_appendf(output, " < ");
                     break;
                 }
                 if (!compile_dump_python311_term(&op_stmt.data.assign_binop.rhs, output))
@@ -960,6 +976,23 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
                 nob_sb_appendf(output, "    imull -%ld(%%rbp), %%eax\n", assign->rhs.data.var_index * 4);
                 break;
             }
+            break;
+        }
+        case SPY_OP_EXPR_BINOP_lt:
+        {
+            // Use ecx as temporary register, not ebx, because ebx causes segfault on my machine.
+            nob_sb_appendf(output, "    xor %%ecx,  %%ecx\n");
+            switch (assign->rhs.type)
+            {
+            case SPY_OP_TERM_intlit:
+                nob_sb_appendf(output, "    cmp $%ld, %%eax\n", assign->rhs.data.intlit);
+                break;
+            case SPY_OP_TERM_var:
+                nob_sb_appendf(output, "    cmp -%ld(%%rbp), %%eax\n", assign->rhs.data.var_index * 4);
+                break;
+            }
+            nob_sb_appendf(output, "    setl %%cl\n");
+            nob_sb_appendf(output, "    movl %%ecx, %%eax\n");
             break;
         }
         }
