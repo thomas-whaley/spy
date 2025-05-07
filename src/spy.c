@@ -193,6 +193,7 @@ enum spy_op_expr_binop_type
 {
     SPY_OP_EXPR_BINOP_add,
     SPY_OP_EXPR_BINOP_sub,
+    SPY_OP_EXPR_BINOP_mul,
 };
 
 typedef struct
@@ -306,10 +307,60 @@ bool parse_expression_term(stb_lexer *lexer, char *file_path, spy_vars *vars, sp
     return true;
 }
 
+bool parse_expression_multiply(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term)
+{
+    spy_op_term lhs = {
+        .type = term->type,
+        .data = term->data,
+    };
+    if (!parse_expression_term(lexer, file_path, vars, &lhs))
+        return false;
+
+    char *old_parse_point = lexer->parse_point;
+    p_lexer_get_token(lexer);
+    if (lexer->token == '*')
+    {
+        (*local_variables_count)++;
+        size_t index = *local_variables_count;
+        spy_op_term rhs = {0};
+        spy_op_assign_binop binop = {0};
+        // Get compiler error to add new types here
+        switch (binop.type)
+        {
+        case SPY_OP_EXPR_BINOP_add:
+        case SPY_OP_EXPR_BINOP_sub:
+        case SPY_OP_EXPR_BINOP_mul:
+            break;
+        }
+        spy_op_stmt stmt = {0};
+        while (lexer->token == '*')
+        {
+            p_lexer_get_token(lexer);
+            if (!parse_expression_term(lexer, file_path, vars, &rhs))
+                return false;
+            binop.type = SPY_OP_EXPR_BINOP_mul;
+            binop.lhs = lhs;
+            binop.rhs = rhs;
+            binop.var_index = index;
+            stmt.type = SPY_OP_assign_binop;
+            stmt.data.assign_binop = binop;
+            nob_da_append(ops, stmt);
+            lhs.type = SPY_OP_TERM_var;
+            lhs.data.var_index = index;
+
+            old_parse_point = lexer->parse_point;
+            p_lexer_get_token(lexer);
+        }
+    }
+    lexer->parse_point = old_parse_point;
+    *term = lhs;
+    return true;
+}
+
 bool parse_expression_plus_minus(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term)
 {
     spy_op_term lhs = {0};
-    if (!parse_expression_term(lexer, file_path, vars, &lhs))
+    if (!parse_expression_multiply(lexer, file_path, vars, local_variables_count, ops, &lhs))
         return false;
 
     char *old_parse_point = lexer->parse_point;
@@ -325,15 +376,16 @@ bool parse_expression_plus_minus(stb_lexer *lexer, char *file_path, spy_vars *va
         {
         case SPY_OP_EXPR_BINOP_add:
         case SPY_OP_EXPR_BINOP_sub:
+        case SPY_OP_EXPR_BINOP_mul:
             break;
         }
         spy_op_stmt stmt = {0};
         while (lexer->token == '+' || lexer->token == '-')
         {
-            p_lexer_get_token(lexer);
-            if (!parse_expression_term(lexer, file_path, vars, &rhs))
-                return false;
             binop.type = lexer->token == '+' ? SPY_OP_EXPR_BINOP_add : SPY_OP_EXPR_BINOP_sub;
+            p_lexer_get_token(lexer);
+            if (!parse_expression_multiply(lexer, file_path, vars, local_variables_count, ops, &rhs))
+                return false;
             binop.lhs = lhs;
             binop.rhs = rhs;
             binop.var_index = index;
@@ -599,6 +651,9 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
                 case SPY_OP_EXPR_BINOP_sub:
                     nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_SUB [ var_%ld, ", op_stmt.data.assign.var_index);
                     break;
+                case SPY_OP_EXPR_BINOP_mul:
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_MUL [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
                 }
                 if (!compile_dump_ir_term(&op_stmt.data.assign_binop.lhs, output))
                     return false;
@@ -672,6 +727,9 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
                     break;
                 case SPY_OP_EXPR_BINOP_sub:
                     nob_sb_appendf(output, " - ");
+                    break;
+                case SPY_OP_EXPR_BINOP_mul:
+                    nob_sb_appendf(output, " * ");
                     break;
                 }
                 if (!compile_dump_python311_term(&op_stmt.data.assign_binop.rhs, output))
@@ -751,6 +809,7 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
                 nob_sb_appendf(output, "    addl -%ld(%%rbp), %%eax\n", assign->rhs.data.var_index * 4);
                 break;
             }
+            break;
         }
         case SPY_OP_EXPR_BINOP_sub:
         {
@@ -763,6 +822,20 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
                 nob_sb_appendf(output, "    subl -%ld(%%rbp), %%eax\n", assign->rhs.data.var_index * 4);
                 break;
             }
+            break;
+        }
+        case SPY_OP_EXPR_BINOP_mul:
+        {
+            switch (assign->rhs.type)
+            {
+            case SPY_OP_TERM_intlit:
+                nob_sb_appendf(output, "    imull $%ld, %%eax\n", assign->rhs.data.intlit);
+                break;
+            case SPY_OP_TERM_var:
+                nob_sb_appendf(output, "    imull -%ld(%%rbp), %%eax\n", assign->rhs.data.var_index * 4);
+                break;
+            }
+            break;
         }
         }
         nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
