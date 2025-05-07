@@ -369,10 +369,10 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
         if (lexer->token == '(')
         {
             // Function call
-            if (!str_eq(id, "print"))
+            if (!str_eq(id, "putchar"))
             {
                 print_loc(lexer, file_path, lexer->where_firstchar);
-                fprintf(stderr, ": ERROR: Function calls other than print are currently unsupported.\n");
+                fprintf(stderr, ": ERROR: Function calls other than putchar are currently unsupported.\n");
                 print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
                 return false;
             }
@@ -549,7 +549,7 @@ char *TARGET_STRINGS[] = {
     "x86-64-macos",
     "aarch64-mac-m1",
     "python311",
-    "dump-ir",
+    "ir",
 };
 
 bool compile_dump_ir_term(spy_op_term *term, Nob_String_Builder *output)
@@ -723,6 +723,7 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
             nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
             break;
         }
+        break;
     }
     case SPY_OP_assign_binop:
     {
@@ -765,6 +766,7 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
         }
         }
         nob_sb_appendf(output, "    movl %%eax, -%ld(%%rbp)\n", assign->var_index * 4);
+        break;
     }
     case SPY_OP_func_call:
     {
