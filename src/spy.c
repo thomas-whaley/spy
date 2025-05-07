@@ -271,6 +271,46 @@ bool is_keyword(char *name)
     return false;
 }
 
+#define NUM_PRECEDENCE_LEVELS 2
+
+const long BINOP_PRECEDENCE_TOKENS[NUM_PRECEDENCE_LEVELS][2] = {
+    {'+', '-'},
+    {'*'},
+};
+
+const enum spy_op_expr_binop_type BINOP_PRECEDENCE_TYPES[][2] = {
+    {SPY_OP_EXPR_BINOP_add, SPY_OP_EXPR_BINOP_sub},
+    {SPY_OP_EXPR_BINOP_mul},
+};
+
+bool token_is_at_binop_precedence(long token, size_t precedence_level)
+{
+    const long *tokens = BINOP_PRECEDENCE_TOKENS[precedence_level];
+    for (size_t i = 0; i < NUM_PRECEDENCE_LEVELS; i++)
+    {
+        if (tokens[i] == token)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+enum spy_op_expr_binop_type expr_binop_type_from_token_precedence(long token, size_t precedence_level)
+{
+    const long *tokens = BINOP_PRECEDENCE_TOKENS[precedence_level];
+    const enum spy_op_expr_binop_type *types = BINOP_PRECEDENCE_TYPES[precedence_level];
+    for (size_t i = 0; i < NUM_PRECEDENCE_LEVELS; i++)
+    {
+        if (tokens[i] == token)
+        {
+            return types[i];
+        }
+    }
+    fprintf(stderr, "Unreachable. Please update the precedence tables. Trying to grab %s from precedence %zu\n", pretty_token(token), precedence_level);
+    exit(1);
+}
+
 bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term);
 
 bool parse_expression_term(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term)
@@ -320,85 +360,43 @@ bool parse_expression_term(stb_lexer *lexer, char *file_path, spy_vars *vars, si
     return true;
 }
 
-bool parse_expression_multiply(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term)
+bool parse_expression_precedence(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term, size_t precedence_level)
 {
-    spy_op_term lhs = {0};
-    if (!parse_expression_term(lexer, file_path, vars, local_variables_count, ops, &lhs))
-        return false;
-
-    char *old_parse_point = lexer->parse_point;
-    p_lexer_get_token(lexer);
-    if (lexer->token == '*')
+    if (precedence_level >= NUM_PRECEDENCE_LEVELS)
     {
-        (*local_variables_count)++;
-        size_t index = *local_variables_count;
-        spy_op_term rhs = {0};
-        spy_op_assign_binop binop = {0};
-        // Get compiler error to add new types here
-        switch (binop.type)
-        {
-        case SPY_OP_EXPR_BINOP_add:
-        case SPY_OP_EXPR_BINOP_sub:
-        case SPY_OP_EXPR_BINOP_mul:
-            break;
-        }
-        spy_op_stmt stmt = {0};
-        size_t count = 0;
-        while (lexer->token == '*')
-        {
-            p_lexer_get_token(lexer);
-            if (!parse_expression_term(lexer, file_path, vars, local_variables_count, ops, &rhs))
-                return false;
-            binop.type = SPY_OP_EXPR_BINOP_mul;
-            binop.lhs = lhs;
-            binop.rhs = rhs;
-            binop.var_index = index;
-            stmt.type = count > 0 ? SPY_OP_assign_binop : SPY_OP_declare_assign_binop;
-            stmt.data.assign_binop = binop;
-            nob_da_append(ops, stmt);
-            lhs.type = SPY_OP_TERM_var;
-            lhs.data.var_index = index;
-
-            old_parse_point = lexer->parse_point;
-            p_lexer_get_token(lexer);
-            count++;
-        }
+        if (!parse_expression_term(lexer, file_path, vars, local_variables_count, ops, term))
+            return false;
+        return true;
     }
-    lexer->parse_point = old_parse_point;
-    *term = lhs;
-    return true;
-}
-
-bool parse_expression_plus_minus(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term)
-{
     spy_op_term lhs = {0};
-    if (!parse_expression_multiply(lexer, file_path, vars, local_variables_count, ops, &lhs))
+    if (!parse_expression_precedence(lexer, file_path, vars, local_variables_count, ops, &lhs, precedence_level + 1))
         return false;
 
     char *old_parse_point = lexer->parse_point;
     p_lexer_get_token(lexer);
-    if (lexer->token == '+' || lexer->token == '-')
+    if (token_is_at_binop_precedence(lexer->token, precedence_level))
     {
         (*local_variables_count)++;
         size_t index = *local_variables_count;
         spy_op_term rhs = {0};
         spy_op_assign_binop binop = {0};
-        // Get compiler error to add new types here
-        switch (binop.type)
-        {
-        case SPY_OP_EXPR_BINOP_add:
-        case SPY_OP_EXPR_BINOP_sub:
-        case SPY_OP_EXPR_BINOP_mul:
-            break;
-        }
         spy_op_stmt stmt = {0};
         size_t count = 0;
-        while (lexer->token == '+' || lexer->token == '-')
+        long token = lexer->token;
+        while (token_is_at_binop_precedence(lexer->token, precedence_level))
         {
-            binop.type = lexer->token == '+' ? SPY_OP_EXPR_BINOP_add : SPY_OP_EXPR_BINOP_sub;
             p_lexer_get_token(lexer);
-            if (!parse_expression_multiply(lexer, file_path, vars, local_variables_count, ops, &rhs))
+            if (!parse_expression_precedence(lexer, file_path, vars, local_variables_count, ops, &rhs, precedence_level + 1))
                 return false;
+            binop.type = expr_binop_type_from_token_precedence(token, precedence_level);
+            // Get compiler error to add new types here
+            switch (binop.type)
+            {
+            case SPY_OP_EXPR_BINOP_add:
+            case SPY_OP_EXPR_BINOP_sub:
+            case SPY_OP_EXPR_BINOP_mul:
+                break;
+            }
             binop.lhs = lhs;
             binop.rhs = rhs;
             binop.var_index = index;
@@ -420,7 +418,7 @@ bool parse_expression_plus_minus(stb_lexer *lexer, char *file_path, spy_vars *va
 
 bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term)
 {
-    return parse_expression_plus_minus(lexer, file_path, vars, local_variables_count, ops, term);
+    return parse_expression_precedence(lexer, file_path, vars, local_variables_count, ops, term, 0);
 }
 
 bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops)
