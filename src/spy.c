@@ -197,7 +197,9 @@ enum spy_op_expr_binop_type
     SPY_OP_EXPR_BINOP_sub,
     SPY_OP_EXPR_BINOP_mul,
     SPY_OP_EXPR_BINOP_lt,
+    SPY_OP_EXPR_BINOP_lte,
     SPY_OP_EXPR_BINOP_gt,
+    SPY_OP_EXPR_BINOP_gte,
     SPY_OP_EXPR_BINOP_eq,
     SPY_OP_EXPR_BINOP_neq,
 };
@@ -287,7 +289,9 @@ bool token_is_at_binop_precedence(long token, size_t precedence_level)
     case SPY_OP_EXPR_BINOP_sub:
     case SPY_OP_EXPR_BINOP_mul:
     case SPY_OP_EXPR_BINOP_lt:
+    case SPY_OP_EXPR_BINOP_lte:
     case SPY_OP_EXPR_BINOP_gt:
+    case SPY_OP_EXPR_BINOP_gte:
     case SPY_OP_EXPR_BINOP_eq:
     case SPY_OP_EXPR_BINOP_neq:
         break;
@@ -295,7 +299,7 @@ bool token_is_at_binop_precedence(long token, size_t precedence_level)
     switch (precedence_level)
     {
     case 0:
-        return token == '<' || token == '>' || token == PLEX_eq || token == PLEX_noteq;
+        return token == '<' || token == '>' || token == PLEX_eq || token == PLEX_noteq || token == PLEX_lesseq || token == PLEX_greatereq;
     case 1:
         return token == '+' || token == '-';
     case 2:
@@ -315,7 +319,9 @@ enum spy_op_expr_binop_type expr_binop_type_from_token_precedence(long token, si
     case SPY_OP_EXPR_BINOP_sub:
     case SPY_OP_EXPR_BINOP_mul:
     case SPY_OP_EXPR_BINOP_lt:
+    case SPY_OP_EXPR_BINOP_lte:
     case SPY_OP_EXPR_BINOP_gt:
+    case SPY_OP_EXPR_BINOP_gte:
     case SPY_OP_EXPR_BINOP_eq:
     case SPY_OP_EXPR_BINOP_neq:
         break;
@@ -334,6 +340,10 @@ enum spy_op_expr_binop_type expr_binop_type_from_token_precedence(long token, si
             return SPY_OP_EXPR_BINOP_eq;
         case PLEX_noteq:
             return SPY_OP_EXPR_BINOP_neq;
+        case PLEX_lesseq:
+            return SPY_OP_EXPR_BINOP_lte;
+        case PLEX_greatereq:
+            return SPY_OP_EXPR_BINOP_gte;
         }
     }
     case 1:
@@ -769,6 +779,12 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
                 case SPY_OP_EXPR_BINOP_gt:
                     nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_GT [ var_%ld, ", op_stmt.data.assign.var_index);
                     break;
+                case SPY_OP_EXPR_BINOP_lte:
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_LTE [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_gte:
+                    nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_GTE [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
                 case SPY_OP_EXPR_BINOP_eq:
                     nob_sb_appendf(output, "    OP_STATEMENT_ASSIGN_EQ [ var_%ld, ", op_stmt.data.assign.var_index);
                     break;
@@ -802,6 +818,12 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
                     break;
                 case SPY_OP_EXPR_BINOP_gt:
                     nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_GT [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_lte:
+                    nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_LTE [ var_%ld, ", op_stmt.data.assign.var_index);
+                    break;
+                case SPY_OP_EXPR_BINOP_gte:
+                    nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_GTE [ var_%ld, ", op_stmt.data.assign.var_index);
                     break;
                 case SPY_OP_EXPR_BINOP_eq:
                     nob_sb_appendf(output, "    OP_STATEMENT_DECLARE_ASSIGN_EQ [ var_%ld, ", op_stmt.data.assign.var_index);
@@ -902,6 +924,12 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
                 case SPY_OP_EXPR_BINOP_gt:
                     nob_sb_appendf(output, " > ");
                     break;
+                case SPY_OP_EXPR_BINOP_lte:
+                    nob_sb_appendf(output, " <= ");
+                    break;
+                case SPY_OP_EXPR_BINOP_gte:
+                    nob_sb_appendf(output, " >= ");
+                    break;
                 case SPY_OP_EXPR_BINOP_eq:
                     nob_sb_appendf(output, " == ");
                     break;
@@ -935,6 +963,12 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
                     break;
                 case SPY_OP_EXPR_BINOP_gt:
                     nob_sb_appendf(output, " > ");
+                    break;
+                case SPY_OP_EXPR_BINOP_lte:
+                    nob_sb_appendf(output, " <= ");
+                    break;
+                case SPY_OP_EXPR_BINOP_gte:
+                    nob_sb_appendf(output, " >= ");
                     break;
                 case SPY_OP_EXPR_BINOP_eq:
                     nob_sb_appendf(output, " == ");
@@ -1052,6 +1086,8 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
         }
         case SPY_OP_EXPR_BINOP_lt:
         case SPY_OP_EXPR_BINOP_gt:
+        case SPY_OP_EXPR_BINOP_lte:
+        case SPY_OP_EXPR_BINOP_gte:
         case SPY_OP_EXPR_BINOP_eq:
         case SPY_OP_EXPR_BINOP_neq:
         {
@@ -1076,6 +1112,12 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
                 break;
             case SPY_OP_EXPR_BINOP_gt:
                 nob_sb_appendf(output, "    setg %%cl\n");
+                break;
+            case SPY_OP_EXPR_BINOP_lte:
+                nob_sb_appendf(output, "    setle %%cl\n");
+                break;
+            case SPY_OP_EXPR_BINOP_gte:
+                nob_sb_appendf(output, "    setge %%cl\n");
                 break;
             case SPY_OP_EXPR_BINOP_eq:
                 nob_sb_appendf(output, "    sete %%cl\n");
