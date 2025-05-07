@@ -271,7 +271,9 @@ bool is_keyword(char *name)
     return false;
 }
 
-bool parse_expression_term(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_term *term)
+bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term);
+
+bool parse_expression_term(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term)
 {
     // Get compiler error to add new types here
     switch (term->type)
@@ -299,6 +301,15 @@ bool parse_expression_term(stb_lexer *lexer, char *file_path, spy_vars *vars, sp
         term->type = SPY_OP_TERM_var;
         term->data.var_index = var_check->index;
     }
+    else if (lexer->token == '(')
+    {
+        p_lexer_get_token(lexer);
+        if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, term))
+            return false;
+        p_lexer_get_token(lexer);
+        if (!expect_plex(lexer, file_path, ')'))
+            return false;
+    }
     else
     {
         print_loc(lexer, file_path, lexer->where_firstchar);
@@ -311,11 +322,8 @@ bool parse_expression_term(stb_lexer *lexer, char *file_path, spy_vars *vars, sp
 
 bool parse_expression_multiply(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops, spy_op_term *term)
 {
-    spy_op_term lhs = {
-        .type = term->type,
-        .data = term->data,
-    };
-    if (!parse_expression_term(lexer, file_path, vars, &lhs))
+    spy_op_term lhs = {0};
+    if (!parse_expression_term(lexer, file_path, vars, local_variables_count, ops, &lhs))
         return false;
 
     char *old_parse_point = lexer->parse_point;
@@ -339,7 +347,7 @@ bool parse_expression_multiply(stb_lexer *lexer, char *file_path, spy_vars *vars
         while (lexer->token == '*')
         {
             p_lexer_get_token(lexer);
-            if (!parse_expression_term(lexer, file_path, vars, &rhs))
+            if (!parse_expression_term(lexer, file_path, vars, local_variables_count, ops, &rhs))
                 return false;
             binop.type = SPY_OP_EXPR_BINOP_mul;
             binop.lhs = lhs;
