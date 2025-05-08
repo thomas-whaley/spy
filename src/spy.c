@@ -115,6 +115,21 @@ void print_loc(stb_lexer *lexer, char *file_path, const char *where)
     fprintf(stderr, "%s:%d:%d", file_path, loc.line_number, loc.line_offset + 1);
 }
 
+void dump_lexer(stb_lexer *lexer, char *input_path, Nob_String_Builder *output)
+{
+    stb_lex_location loc = {0};
+    for (;;)
+    {
+        p_lexer_get_token(lexer);
+        p_lexer_get_location(lexer, lexer->where_firstchar, &loc);
+        nob_sb_appendf(output, "%s:%d%d: `%s` (%d, %ld)\n", input_path, loc.line_number, loc.line_offset + 1, pretty_token(lexer->token), loc.line_offset + 1, loc.line_offset + 1 + lexer->where_lastchar - lexer->where_firstchar);
+        if (lexer->token == PLEX_eof)
+        {
+            return;
+        }
+    }
+}
+
 /*
     PARSER
 */
@@ -793,6 +808,7 @@ enum spy_output_target
     SPY_OUTPUT_TARGET_aarch64_mac_m1,
     SPY_OUTPUT_TARGET_python311,
     SPY_OUTPUT_TARGET_dump_ir,
+    SPY_OUTPUT_TARGET_dump_lexer,
 };
 
 char *TARGET_STRINGS[] = {
@@ -800,6 +816,7 @@ char *TARGET_STRINGS[] = {
     "aarch64-mac-m1",
     "python311",
     "ir",
+    "lexer",
 };
 
 bool compile_dump_ir_term(spy_op_term *term, Nob_String_Builder *output)
@@ -1314,6 +1331,9 @@ bool compile(spy_ops *ops, Nob_String_Builder *output, enum spy_output_target ta
         return false;
     case SPY_OUTPUT_TARGET_python311:
         return compile_python311(ops, output);
+    case SPY_OUTPUT_TARGET_dump_lexer:
+        fprintf(stderr, "Unreachable! Target `lexer` should not call compile!\n");
+        return false;
     }
     return true;
 }
@@ -1342,6 +1362,7 @@ void default_output_path(char *input_path, enum spy_output_target target, Nob_St
         nob_sb_append_cstr(output, ".s");
         break;
     case SPY_OUTPUT_TARGET_dump_ir:
+    case SPY_OUTPUT_TARGET_dump_lexer:
         nob_sb_append_cstr(output, ".txt");
         break;
     case SPY_OUTPUT_TARGET_aarch64_mac_m1:
@@ -1432,28 +1453,50 @@ int main(int argc, char **argv)
 
     p_lexer_init(&lexer, sb.items, sb.items + sb.count, string_store, sizeof string_store);
 
+    Nob_String_Builder output = {0};
+
     spy_vars vars = {0};
 
     spy_ops ops = {0};
+
+    if (target == SPY_OUTPUT_TARGET_dump_lexer)
+    {
+        dump_lexer(&lexer, file_path, &output);
+        if (!nob_write_entire_file(*output_path, output.items, output.count))
+        {
+            fprintf(stderr, "ERROR: Unable to write to %s\n", *output_path);
+            goto free;
+            return 1;
+        }
+        goto free;
+        return 0;
+    }
 
     p_lexer_get_token(&lexer);
     // TODO: turn into while loop to parse multiple files
     spy_op_function op_function = {0};
     if (!parse_function(&lexer, file_path, &vars, &op_function))
+    {
+        goto free;
         return 1;
+    }
+
     nob_da_append(&ops, op_function);
 
-    Nob_String_Builder output = {0};
-
     if (!compile(&ops, &output, target))
+    {
+        goto free;
         return 1;
+    }
 
     if (!nob_write_entire_file(*output_path, output.items, output.count))
     {
         fprintf(stderr, "ERROR: Unable to write to %s\n", *output_path);
+        goto free;
         return 1;
     }
 
+free:
     nob_sb_free(default_output_path_sb);
     nob_sb_free(sb);
     nob_sb_free(output);
