@@ -1,5 +1,4 @@
-def main() -> None {
-    temp_b: int = 5;
-    temp_c: int = temp_b != 4;
-    putchar(temp_c + 48);
-}
+def main() -> None:
+    temp_b: int = 5
+    temp_c: int = temp_b != 4
+    putchar(temp_c + 48)

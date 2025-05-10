@@ -4,3 +4,4 @@ nob
 *.s
 *.o
 *.py
+*.json
