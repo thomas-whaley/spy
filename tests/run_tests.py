@@ -31,8 +31,16 @@ class SpyResult(TypedDict):
     run_stdout: str
     run_stderr: str
 
-    def __str__(self):
-        return pprint.pformat(self)
+
+def format_result(result: SpyResult) -> str:
+    output: list[str] = []
+    output.append("{")
+    for i, (k, v) in enumerate(result.items()):
+        output.append(f"    \"{k}\": {json.dumps(v)}")
+        if i != len(result) - 1:
+            output[-1] += ","
+    output.append("}")
+    return os.linesep.join(output)
 
 
 def run_spy(input_file: str, target: SpyTarget, run: bool = False) -> SpyResult:
@@ -91,7 +99,7 @@ def run_spy(input_file: str, target: SpyTarget, run: bool = False) -> SpyResult:
 
 def write_result(result: SpyResult, file_path: str) -> None:
     with open(file_path, 'w') as f:
-        f.write(str(result))
+        f.write(format_result(result))
 
 
 def test_spy(input_file: str, target: SpyTarget, write_anyway: bool = False) -> bool:
@@ -99,23 +107,31 @@ def test_spy(input_file: str, target: SpyTarget, write_anyway: bool = False) -> 
     result = run_spy(input_file, target, run=True)
     name, _ = os.path.splitext(input_file)
     json_file: str = f"{name}.json"
-    formatted_result = str(result)
-    if not write_anyway and os.path.exists(json_file):
+    formatted_result = format_result(result)
+    if os.path.exists(json_file):
         with open(json_file, 'r') as f:
             expected_json = f.read()
         formatted_expected = expected_json
         if formatted_expected != formatted_result:
+            if write_anyway:
+                print(bcolors.WARNING, "UPDATED", bcolors.ENDC)
+                write_result(result, json_file)
+                return True
             print(bcolors.FAIL, "FAILED", bcolors.ENDC)
             print("Expected:")
             print(formatted_expected)
             print("Found:")
             print(formatted_result)
             return False
+        elif write_anyway:
+            print(bcolors.OKBLUE, "NO CHANGES", bcolors.ENDC)
+            return True
         print(bcolors.OKGREEN, "PASSED", bcolors.ENDC)
         return True
-    print(bcolors.WARNING, "UPDATED", bcolors.ENDC)
+    print(bcolors.OKBLUE, "CREATED", bcolors.ENDC)
     write_result(result, json_file)
     return True
+    
 
 
 def test_all_in_dir(dir_path: str, target: SpyTarget, write_anyway: bool = False) -> None:

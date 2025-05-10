@@ -3,5 +3,3 @@ nob
 *.old
 *.s
 *.o
-*.py
-*.json

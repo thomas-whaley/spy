@@ -1,1 +1,8 @@
-{'input_file': 'examples/if.spy', 'target': 'x86-64-macos', 'comp_stdout': '', 'comp_stderr': '', 'run_stdout': 'E\n', 'run_stderr': ''}
+{
+    "input_file": "examples/if.spy",
+    "target": "x86-64-macos",
+    "comp_stdout": "",
+    "comp_stderr": "",
+    "run_stdout": "E\n",
+    "run_stderr": ""
+}
