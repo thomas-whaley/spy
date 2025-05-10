@@ -1,4 +1,4 @@
-def main() -> None
+def main() -> None:
     counter: int = 0
     while counter < 10:
         putchar(counter + 48)

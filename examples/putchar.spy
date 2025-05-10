@@ -1,2 +1,2 @@
 def main() -> None:
-    print(69)
+    putchar(69)

@@ -1,0 +1,1 @@
+{'input_file': 'examples/hello.spy', 'target': 'x86-64-macos', 'comp_stdout': '', 'comp_stderr': '', 'run_stdout': 'Hello, World!\n', 'run_stderr': ''}

@@ -90,7 +90,7 @@ void print_line(stb_lexer *lexer, char *where_start, char *where_end)
     // TODO: maybe remove line number, its slow :)
     stb_lex_location loc = {0};
     p_lexer_get_location(lexer, where_start, &loc);
-    printf("%d", loc.line_number);
+    fprintf(stderr, "%d", loc.line_number);
 
     char *ptr = where_start;
     size_t start_col = 0;
@@ -101,13 +101,13 @@ void print_line(stb_lexer *lexer, char *where_start, char *where_end)
     }
     while (ptr != lexer->eof && *ptr != '\n')
     {
-        putchar(*ptr);
+        fprintf(stderr, "%c", *ptr);
         ptr++;
     }
     putchar('\n');
     for (size_t i = 0; i < start_col + 1; i++)
     {
-        putchar(' ');
+        fprintf(stderr, " ");
     }
     size_t length = where_end - where_start;
     if (where_start == 0 || where_start > where_end)
@@ -116,9 +116,9 @@ void print_line(stb_lexer *lexer, char *where_start, char *where_end)
     }
     for (size_t i = 0; i <= length; i++)
     {
-        putchar('~');
+        fprintf(stderr, "~");
     }
-    putchar('\n');
+    fprintf(stderr, "\n");
 }
 
 void print_loc(stb_lexer *lexer, char *file_path, const char *where)
@@ -1530,10 +1530,18 @@ int main(int argc, char **argv)
         if (!nob_write_entire_file(*output_path, output.items, output.count))
         {
             fprintf(stderr, "ERROR: Unable to write to %s\n", *output_path);
-            goto free;
+            nob_sb_free(default_output_path_sb);
+            nob_sb_free(sb);
+            nob_sb_free(output);
+            nob_da_free(vars);
+            nob_da_free(ops);
             return 1;
         }
-        goto free;
+        nob_sb_free(default_output_path_sb);
+        nob_sb_free(sb);
+        nob_sb_free(output);
+        nob_da_free(vars);
+        nob_da_free(ops);
         return 0;
     }
 
@@ -1542,7 +1550,11 @@ int main(int argc, char **argv)
     spy_op_function op_function = {0};
     if (!parse_function(&lexer, file_path, &vars, &op_function))
     {
-        goto free;
+        nob_sb_free(default_output_path_sb);
+        nob_sb_free(sb);
+        nob_sb_free(output);
+        nob_da_free(vars);
+        nob_da_free(ops);
         return 1;
     }
     expect_plex(&lexer, file_path, PLEX_eof);
@@ -1551,18 +1563,25 @@ int main(int argc, char **argv)
 
     if (!compile(&ops, &output, target))
     {
-        goto free;
+        nob_sb_free(default_output_path_sb);
+        nob_sb_free(sb);
+        nob_sb_free(output);
+        nob_da_free(vars);
+        nob_da_free(ops);
         return 1;
     }
 
     if (!nob_write_entire_file(*output_path, output.items, output.count))
     {
         fprintf(stderr, "ERROR: Unable to write to %s\n", *output_path);
-        goto free;
+        nob_sb_free(default_output_path_sb);
+        nob_sb_free(sb);
+        nob_sb_free(output);
+        nob_da_free(vars);
+        nob_da_free(ops);
         return 1;
     }
 
-free:
     nob_sb_free(default_output_path_sb);
     nob_sb_free(sb);
     nob_sb_free(output);
