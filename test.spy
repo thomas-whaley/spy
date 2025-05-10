@@ -1,4 +1,6 @@
 def main() -> None:
-    temp_b: int = 5
-    temp_c: int = temp_b != 4
-    putchar(temp_c + 48)
+    counter: int = 0
+    while counter < 10:
+        putchar(counter + 48)
+        putchar(10)
+        counter = counter + 1

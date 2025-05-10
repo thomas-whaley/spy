@@ -109,7 +109,12 @@ void print_line(stb_lexer *lexer, char *where_start, char *where_end)
     {
         putchar(' ');
     }
-    for (size_t i = 0; i <= (size_t)(where_end - where_start); i++)
+    size_t length = where_end - where_start;
+    if (where_start == 0 || where_start > where_end)
+    {
+        length = 1;
+    }
+    for (size_t i = 0; i <= length; i++)
     {
         putchar('~');
     }
@@ -568,18 +573,26 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &term))
                     return false;
                 p_lexer_get_token(lexer);
-                if (!expect_plex(lexer, file_path, '{'))
+                if (!expect_plex(lexer, file_path, ':'))
+                    return false;
+                p_lexer_get_token(lexer);
+                if (!expect_plex(lexer, file_path, PLEX_newline))
+                    return false;
+                p_lexer_get_token(lexer);
+                if (!expect_plex(lexer, file_path, PLEX_indent))
                     return false;
                 size_t replace_conditional_jump_index_index = ops->count;
                 op.type = SPY_OP_conditional_jump;
                 nob_da_append(ops, op);
                 p_lexer_get_token(lexer);
-                while (lexer->token != '}')
+                while (lexer->token != PLEX_deindent && lexer->token != PLEX_eof)
                 {
                     if (!parse_statement(lexer, file_path, vars, local_variables_count, ops))
                         return false;
                     p_lexer_get_token(lexer);
                 }
+                long lexes[] = {PLEX_deindent, PLEX_eof};
+                expect_plexes(lexer, file_path, lexes, 2);
                 op.type = SPY_OP_jump;
                 op.data.jump.index = start_block_index;
                 nob_da_append(ops, op);
@@ -594,7 +607,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 // print_line(lexer, id_where, id_where_last);
                 // return false;
             }
-            if (str_eq(id, "if"))
+            else if (str_eq(id, "if"))
             {
                 size_t start_block_index = ops->count;
                 spy_op_stmt op = {
@@ -634,7 +647,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
             else
             {
                 print_loc(lexer, file_path, id_where);
-                fprintf(stderr, ": ERROR: Invalid statement. Unexpected keyword!\n");
+                fprintf(stderr, ": ERROR: Invalid statement. Unexpected keyword `%s`!\n", id);
                 print_line(lexer, id_where, id_where_last);
                 return false;
             }
@@ -668,6 +681,9 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 .data.func_call = op_func_call,
             };
             nob_da_append(ops, op);
+            p_lexer_get_token(lexer);
+            if (!expect_plex(lexer, file_path, PLEX_newline))
+                return false;
         }
         else if (lexer->token == ':')
         {
@@ -726,6 +742,9 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 .data.assign = op_assign,
             };
             nob_da_append(ops, op);
+            p_lexer_get_token(lexer);
+            if (!expect_plex(lexer, file_path, PLEX_newline))
+                return false;
         }
         else if (lexer->token == '=')
         {
@@ -760,6 +779,9 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 .data.assign = op_assign,
             };
             nob_da_append(ops, op);
+            p_lexer_get_token(lexer);
+            if (!expect_plex(lexer, file_path, PLEX_newline))
+                return false;
         }
         else
         {
@@ -772,12 +794,11 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
     else
     {
         print_loc(lexer, file_path, lexer->where_firstchar);
-        fprintf(stderr, ": ERROR: Invalid statement.\n");
+        fprintf(stderr, ": ERROR: Invalid statement. Found %s\n", pretty_token(lexer->token));
         print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
         return false;
     }
-    p_lexer_get_token(lexer);
-    return expect_plex(lexer, file_path, PLEX_newline);
+    return true;
 }
 
 bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_function *op_func)
