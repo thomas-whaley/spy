@@ -1,3 +1,2 @@
-def main() -> None {
-    print(69);
-}
+def main() -> None:
+    print(69)

@@ -1,6 +1,4 @@
-def main() -> None {
-    if 1 == 1 {
-        putchar(69);
-        putchar(10);
-    }
-}
+def main() -> None:
+    if 1 == 1:
+        putchar(69)
+        putchar(10)
