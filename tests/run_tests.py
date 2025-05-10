@@ -146,6 +146,9 @@ def test_all_in_dir(dir_path: str, target: SpyTarget, write_anyway: bool = False
         count += 1
     print()
     print(f"Tests passed: {count-len(failed_paths)}/{count}")
+    if len(failed_paths) == 0:
+        print("No failed tests")
+        return
     print("Failed tests:")
     for path in failed_paths:
         print(f"   -{bcolors.OKBLUE}{path}{bcolors.ENDC}")

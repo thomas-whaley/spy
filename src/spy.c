@@ -135,7 +135,20 @@ void dump_lexer(stb_lexer *lexer, char *input_path, Nob_String_Builder *output)
     {
         p_lexer_get_token(lexer);
         p_lexer_get_location(lexer, lexer->where_firstchar, &loc);
-        nob_sb_appendf(output, "%s:%d:%d: `%s` (%d, %ld)\n", input_path, loc.line_number, loc.line_offset + 1, pretty_token(lexer->token), loc.line_offset + 1, loc.line_offset + 1 + lexer->where_lastchar - lexer->where_firstchar);
+        nob_sb_appendf(output, "%s:%d:%d-%ld: ", input_path, loc.line_number, loc.line_offset + 1, loc.line_offset + 1 + lexer->where_lastchar - lexer->where_firstchar);
+        switch (lexer->token)
+        {
+        case PLEX_id:
+            nob_sb_appendf(output, "`%s`", lexer->string);
+            break;
+        case PLEX_intlit:
+            nob_sb_appendf(output, "`%ld`", lexer->int_number);
+            break;
+        default:
+            nob_sb_appendf(output, "%s", pretty_token(lexer->token));
+            break;
+        }
+        nob_sb_appendf(output, "\n");
         if (lexer->token == PLEX_eof)
         {
             return;
@@ -211,6 +224,21 @@ typedef struct
     size_t capacity;
 } spy_vars;
 
+typedef struct
+{
+    char *name;
+    size_t num_args;
+    char *where;
+    char *where_last;
+} spy_func;
+
+typedef struct
+{
+    spy_func *items;
+    size_t count;
+    size_t capacity;
+} spy_funcs;
+
 spy_var *find_var(spy_vars *vars, char *name)
 {
     for (size_t i = 0; i < vars->count; i++)
@@ -218,6 +246,18 @@ spy_var *find_var(spy_vars *vars, char *name)
         if (str_eq(vars->items[i].name, name))
         {
             return &vars->items[i];
+        }
+    }
+    return NULL;
+}
+
+spy_func *find_func(spy_funcs *funcs, char *name)
+{
+    for (size_t i = 0; i < funcs->count; i++)
+    {
+        if (str_eq(funcs->items[i].name, name))
+        {
+            return funcs->items + i;
         }
     }
     return NULL;
@@ -267,6 +307,13 @@ typedef struct
 
 typedef struct
 {
+    spy_op_term *items;
+    size_t count;
+    size_t capacity;
+} spy_op_terms;
+
+typedef struct
+{
     size_t var_index;
     spy_op_term term;
 } spy_op_assign;
@@ -282,7 +329,7 @@ typedef struct
 typedef struct
 {
     char *name;
-    spy_op_term arg;
+    spy_op_terms args;
 } spy_op_func_call;
 
 typedef struct
@@ -533,7 +580,7 @@ bool parse_expression(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t 
     return parse_expression_precedence(lexer, file_path, vars, local_variables_count, ops, term, 0);
 }
 
-bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops)
+bool parse_statement(stb_lexer *lexer, char *file_path, spy_funcs *funcs, spy_vars *vars, size_t *local_variables_count, spy_op_stmts *ops)
 {
     // Get compiler error to add new types here
     spy_op_stmt temp_op = {0};
@@ -587,7 +634,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 p_lexer_get_token(lexer);
                 while (lexer->token != PLEX_deindent && lexer->token != PLEX_eof)
                 {
-                    if (!parse_statement(lexer, file_path, vars, local_variables_count, ops))
+                    if (!parse_statement(lexer, file_path, funcs, vars, local_variables_count, ops))
                         return false;
                     p_lexer_get_token(lexer);
                 }
@@ -635,7 +682,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 p_lexer_get_token(lexer);
                 while (lexer->token != PLEX_deindent && lexer->token != PLEX_eof)
                 {
-                    if (!parse_statement(lexer, file_path, vars, local_variables_count, ops))
+                    if (!parse_statement(lexer, file_path, funcs, vars, local_variables_count, ops))
                         return false;
                     p_lexer_get_token(lexer);
                 }
@@ -663,26 +710,36 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
         else if (lexer->token == '(')
         {
             expect_plex(lexer, file_path, '(');
-            // Function call
-            if (!str_eq(id, "putchar"))
+            spy_func *found_func = find_func(funcs, id);
+            if (found_func == NULL)
             {
-                print_loc(lexer, file_path, lexer->where_firstchar);
-                fprintf(stderr, ": ERROR: Function calls other than putchar are currently unsupported.\n");
-                print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
-                return false;
+                // Function call
+                if (!str_eq(id, "putchar"))
+                {
+                    print_loc(lexer, file_path, id_where);
+                    fprintf(stderr, ": ERROR: Undefined function.\n");
+                    print_line(lexer, id_where, id_where_last);
+                    return false;
+                }
             }
+
             // Function args
+            spy_op_terms terms = {0};
             p_lexer_get_token(lexer);
-            spy_op_term term = {0};
-            if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &term))
-                return false;
-            p_lexer_get_token(lexer);
+            while (lexer->token != ')')
+            {
+                spy_op_term term = {0};
+                if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &term))
+                    return false;
+                nob_da_append(&terms, term);
+                p_lexer_get_token(lexer);
+            }
             // End of function call
             if (!expect_plex(lexer, file_path, ')'))
                 return false;
             spy_op_func_call op_func_call = {
                 .name = id,
-                .arg = term,
+                .args = terms,
             };
             spy_op_stmt op = {
                 .type = SPY_OP_func_call,
@@ -809,7 +866,7 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
     return true;
 }
 
-bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_function *op_func)
+bool parse_function(stb_lexer *lexer, char *file_path, spy_funcs *funcs, spy_vars *vars, spy_op_function *op_func)
 {
     // def
     if (!expect_id(lexer, file_path, "def"))
@@ -820,10 +877,30 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_fu
     if (!expect_plex(lexer, file_path, PLEX_id))
         return false;
     op_func->name = strdup(lexer->string);
+    spy_func *found_func = find_func(funcs, op_func->name);
+    if (found_func != NULL)
+    {
+        print_loc(lexer, file_path, lexer->where_firstchar);
+        fprintf(stderr, ": ERROR: Cannot declare existing function.\n");
+        print_line(lexer, lexer->where_firstchar, lexer->where_lastchar);
+        print_loc(lexer, file_path, found_func->where);
+        fprintf(stderr, ": NOTE: Original definition is here.\n");
+        print_line(lexer, found_func->where, found_func->where_last);
+        return false;
+    }
+    spy_func func = {
+        .name = op_func->name,
+        // TODO: This will need to change when we allow function arguments
+        .num_args = 0,
+        .where = lexer->where_firstchar,
+        .where_last = lexer->where_lastchar,
+    };
+    nob_da_append(funcs, func);
 
     p_lexer_get_token(lexer);
     if (!expect_plex(lexer, file_path, '('))
         return false;
+    // TODO: This will need to change when we allow function arguments
     p_lexer_get_token(lexer);
     if (!expect_plex(lexer, file_path, ')'))
         return false;
@@ -847,7 +924,7 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_fu
     size_t local_variables_count = 0;
     while (lexer->token != PLEX_deindent && lexer->token != PLEX_eof)
     {
-        if (!parse_statement(lexer, file_path, vars, &local_variables_count, &op_func->stmts))
+        if (!parse_statement(lexer, file_path, funcs, vars, &local_variables_count, &op_func->stmts))
             return false;
         p_lexer_get_token(lexer);
     }
@@ -856,6 +933,35 @@ bool parse_function(stb_lexer *lexer, char *file_path, spy_vars *vars, spy_op_fu
     long expect[] = {PLEX_deindent, PLEX_eof};
     if (!expect_plexes(lexer, file_path, expect, 2))
         return false;
+    return true;
+}
+
+bool parse_program(stb_lexer *lexer, char *file_path, spy_funcs *funcs, spy_vars *vars, spy_ops *ops)
+{
+    p_lexer_get_token(lexer);
+    bool found_main = false;
+    while (lexer->token != PLEX_eof)
+    {
+        spy_op_function op_function = {0};
+        if (!parse_function(lexer, file_path, funcs, vars, &op_function))
+        {
+            return false;
+        }
+        if (str_eq(op_function.name, "main"))
+        {
+            found_main = true;
+        }
+        nob_da_append(ops, op_function);
+        p_lexer_get_token(lexer);
+    }
+    expect_plex(lexer, file_path, PLEX_eof);
+
+    if (!found_main)
+    {
+        fprintf(stderr, ": ERROR: Program does not contain a main function (no entry point).\n");
+        return false;
+    }
+
     return true;
 }
 
@@ -1011,8 +1117,15 @@ bool compile_dump_ir(spy_ops *ops, Nob_String_Builder *output)
             {
                 spy_op_func_call func_call = op_stmt.data.func_call;
                 nob_sb_appendf(output, "    OP_STATEMENT_FUNCTION_CALL [ %s, ", func_call.name);
-                if (!compile_dump_ir_term(&func_call.arg, output))
-                    return false;
+                for (size_t i = 0; i < func_call.args.count; i++)
+                {
+                    if (!compile_dump_ir_term(func_call.args.items + i, output))
+                        return false;
+                    if (i < func_call.args.count - 1)
+                    {
+                        nob_sb_appendf(output, ", ");
+                    }
+                }
                 nob_sb_appendf(output, " ]\n");
                 break;
             }
@@ -1165,7 +1278,15 @@ bool compile_python311(spy_ops *ops, Nob_String_Builder *output)
             {
                 spy_op_func_call func_call = op_stmt.data.func_call;
                 nob_sb_appendf(output, "    %s(", func_call.name);
-                compile_dump_python311_term(&func_call.arg, output);
+                for (size_t i = 0; i < func_call.args.count; i++)
+                {
+                    if (!compile_dump_ir_term(func_call.args.items + i, output))
+                        return false;
+                    if (i < func_call.args.count - 1)
+                    {
+                        nob_sb_appendf(output, ", ");
+                    }
+                }
                 nob_sb_appendf(output, ")\n");
                 break;
             }
@@ -1320,17 +1441,33 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
     }
     case SPY_OP_func_call:
     {
-        spy_op_func_call *func_call = &op->data.func_call;
-        switch (func_call->arg.type)
+        spy_op_func_call func_call = op->data.func_call;
+        if (func_call.args.count == 1)
         {
-        case SPY_OP_TERM_intlit:
-            nob_sb_appendf(output, "    movl $%ld, %%edi\n", func_call->arg.data.intlit);
-            break;
-        case SPY_OP_TERM_var:
-            nob_sb_appendf(output, "    movl -%ld(%%rbp), %%edi\n", func_call->arg.data.var_index * 4);
-            break;
+            switch (func_call.args.items[0].type)
+            {
+            case SPY_OP_TERM_intlit:
+                nob_sb_appendf(output, "    movl $%ld, %%edi\n", func_call.args.items[0].data.intlit);
+                break;
+            case SPY_OP_TERM_var:
+                nob_sb_appendf(output, "    movl -%ld(%%rbp), %%edi\n", func_call.args.items[0].data.var_index * 4);
+                break;
+            }
         }
-        nob_sb_appendf(output, "    call _putchar\n");
+        else if (func_call.args.count > 1)
+        {
+            fprintf(stderr, "Comiling function calls with more than 1 argument on `x86-64-macos` is not supported yet!\n");
+            return false;
+        }
+        if (str_eq(func_call.name, "putchar"))
+        {
+            nob_sb_appendf(output, "    call _putchar\n");
+        }
+        else
+        {
+            nob_sb_appendf(output, "    call %s\n", func_call.name);
+        }
+
         break;
     }
     case SPY_OP_jump:
@@ -1350,7 +1487,14 @@ bool compile_x86_64_macos_statement(spy_op_stmt *op, Nob_String_Builder *output)
 
 bool compile_x86_64_macos_function_body(spy_op_function *ops, Nob_String_Builder *output)
 {
-    nob_sb_appendf(output, "_%s:\n", ops->name);
+    if (str_eq(ops->name, "main"))
+    {
+        nob_sb_appendf(output, "_%s:\n", ops->name);
+    }
+    else
+    {
+        nob_sb_appendf(output, "%s:\n", ops->name);
+    }
     nob_sb_appendf(output, "    push %%rbp\n");
     for (size_t i = 0; i < ops->stmts.count; i++)
     {
@@ -1521,8 +1665,20 @@ int main(int argc, char **argv)
     Nob_String_Builder output = {0};
 
     spy_vars vars = {0};
+    spy_funcs funcs = {0};
 
     spy_ops ops = {0};
+
+#define free_all()                           \
+    do                                       \
+    {                                        \
+        nob_sb_free(default_output_path_sb); \
+        nob_sb_free(sb);                     \
+        nob_sb_free(output);                 \
+        nob_da_free(vars);                   \
+        nob_da_free(funcs);                  \
+        nob_da_free(ops);                    \
+    } while (0)
 
     if (target == SPY_OUTPUT_TARGET_dump_lexer)
     {
@@ -1530,62 +1686,32 @@ int main(int argc, char **argv)
         if (!nob_write_entire_file(*output_path, output.items, output.count))
         {
             fprintf(stderr, "ERROR: Unable to write to %s\n", *output_path);
-            nob_sb_free(default_output_path_sb);
-            nob_sb_free(sb);
-            nob_sb_free(output);
-            nob_da_free(vars);
-            nob_da_free(ops);
+
             return 1;
         }
-        nob_sb_free(default_output_path_sb);
-        nob_sb_free(sb);
-        nob_sb_free(output);
-        nob_da_free(vars);
-        nob_da_free(ops);
+        free_all();
         return 0;
     }
 
-    p_lexer_get_token(&lexer);
-    // TODO: turn into while loop to parse multiple files
-    spy_op_function op_function = {0};
-    if (!parse_function(&lexer, file_path, &vars, &op_function))
+    if (!parse_program(&lexer, file_path, &funcs, &vars, &ops))
     {
-        nob_sb_free(default_output_path_sb);
-        nob_sb_free(sb);
-        nob_sb_free(output);
-        nob_da_free(vars);
-        nob_da_free(ops);
-        return 1;
+        free_all();
+        return false;
     }
-    expect_plex(&lexer, file_path, PLEX_eof);
-
-    nob_da_append(&ops, op_function);
 
     if (!compile(&ops, &output, target))
     {
-        nob_sb_free(default_output_path_sb);
-        nob_sb_free(sb);
-        nob_sb_free(output);
-        nob_da_free(vars);
-        nob_da_free(ops);
+        free_all();
         return 1;
     }
 
     if (!nob_write_entire_file(*output_path, output.items, output.count))
     {
         fprintf(stderr, "ERROR: Unable to write to %s\n", *output_path);
-        nob_sb_free(default_output_path_sb);
-        nob_sb_free(sb);
-        nob_sb_free(output);
-        nob_da_free(vars);
-        nob_da_free(ops);
+        free_all();
         return 1;
     }
 
-    nob_sb_free(default_output_path_sb);
-    nob_sb_free(sb);
-    nob_sb_free(output);
-    nob_da_free(vars);
-    nob_da_free(ops);
+    free_all();
     return 0;
 }

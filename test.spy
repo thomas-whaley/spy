@@ -1,6 +1,9 @@
+def new_line() -> None:
+    putchar(10)
+
 def main() -> None:
     counter: int = 0
     while counter < 10:
         putchar(counter + 48)
-        putchar(10)
+        new_line()
         counter = counter + 1

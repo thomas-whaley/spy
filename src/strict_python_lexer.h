@@ -87,6 +87,7 @@ void p_lexer_init(stb_lexer *lexer, const char *input_stream, const char *input_
     lexer->parse_point = (char *)input_stream;
     lexer->string_storage = string_store;
     lexer->string_storage_len = store_length;
+    lexer->token = PLEX_first_unused_token;
 }
 
 void p_lexer_get_location(const stb_lexer *lexer, const char *where, stb_lex_location *loc)
@@ -272,57 +273,60 @@ int p_lexer_get_token(stb_lexer *lexer)
     // skip whitespace and comments
     for (;;)
     {
-        if (p != lexer->eof && *p == '\n' && lexer->token != PLEX_newline)
-        {
-            return p_lex_token(lexer, PLEX_newline, p, p);
-        }
-        if (p != lexer->eof && lexer->token == PLEX_newline)
-        {
-            int indent_counter = 0;
-            lexer->current_indentation_level = 0;
-            while (p != lexer->eof)
-            {
-                if (*p == '\n')
-                {
-                    ++p;
-                    indent_counter = 0;
-                    continue;
-                }
-                if (!p_lex_isindent(*p))
-                {
-                    break;
-                }
-                ++indent_counter;
-                ++p;
-            }
-            if (indent_counter % PYTHON_INDENTATION_AMOUNT != 0)
-            {
-                lexer->int_number = indent_counter;
-                return p_lex_token(lexer, PLEX_indentation_error, p - indent_counter, p - 1);
-            }
-            lexer->current_indentation_level = indent_counter / PYTHON_INDENTATION_AMOUNT;
-            if (lexer->current_indentation_level > lexer->previous_indentation_level)
-            {
-                lexer->previous_indentation_level = lexer->current_indentation_level;
-                return p_lex_token(lexer, PLEX_indent, p - indent_counter, p - 1);
-            }
-            if (lexer->current_indentation_level < lexer->previous_indentation_level)
-            {
-                lexer->previous_indentation_level = lexer->current_indentation_level;
-                return p_lex_token(lexer, PLEX_deindent, p - indent_counter, p - 1);
-            }
-            lexer->previous_indentation_level = lexer->current_indentation_level;
-            break;
-        }
-        while (p != lexer->eof && p_lex_iswhite(*p))
-            ++p;
-
         if (p != lexer->eof && p[0] == '#')
         {
             while (p != lexer->eof && *p != '\r' && *p != '\n')
                 ++p;
             continue;
         }
+        if (lexer->token != PLEX_first_unused_token)
+        {
+            if (p != lexer->eof && *p == '\n' && lexer->token != PLEX_newline)
+            {
+                return p_lex_token(lexer, PLEX_newline, p, p);
+            }
+            if (p != lexer->eof && lexer->token == PLEX_newline)
+            {
+                int indent_counter = 0;
+                lexer->current_indentation_level = 0;
+                while (p != lexer->eof)
+                {
+                    if (*p == '\n')
+                    {
+                        ++p;
+                        indent_counter = 0;
+                        continue;
+                    }
+                    if (!p_lex_isindent(*p))
+                    {
+                        break;
+                    }
+                    ++indent_counter;
+                    ++p;
+                }
+                if (indent_counter % PYTHON_INDENTATION_AMOUNT != 0)
+                {
+                    lexer->int_number = indent_counter;
+                    return p_lex_token(lexer, PLEX_indentation_error, p - indent_counter, p - 1);
+                }
+                lexer->current_indentation_level = indent_counter / PYTHON_INDENTATION_AMOUNT;
+                if (lexer->current_indentation_level > lexer->previous_indentation_level)
+                {
+                    lexer->previous_indentation_level = lexer->current_indentation_level;
+                    return p_lex_token(lexer, PLEX_indent, p - indent_counter, p - 1);
+                }
+                if (lexer->current_indentation_level < lexer->previous_indentation_level)
+                {
+                    lexer->previous_indentation_level = lexer->current_indentation_level;
+                    return p_lex_token(lexer, PLEX_deindent, p - indent_counter, p - 1);
+                }
+                lexer->previous_indentation_level = lexer->current_indentation_level;
+                break;
+            }
+        }
+        while (p != lexer->eof && p_lex_iswhite(*p))
+            ++p;
+
         break;
     }
 
