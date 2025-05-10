@@ -621,18 +621,26 @@ bool parse_statement(stb_lexer *lexer, char *file_path, spy_vars *vars, size_t *
                 if (!parse_expression(lexer, file_path, vars, local_variables_count, ops, &term))
                     return false;
                 p_lexer_get_token(lexer);
-                if (!expect_plex(lexer, file_path, '{'))
+                if (!expect_plex(lexer, file_path, ':'))
+                    return false;
+                p_lexer_get_token(lexer);
+                if (!expect_plex(lexer, file_path, PLEX_newline))
+                    return false;
+                p_lexer_get_token(lexer);
+                if (!expect_plex(lexer, file_path, PLEX_indent))
                     return false;
                 size_t replace_conditional_jump_index_index = ops->count;
                 op.type = SPY_OP_conditional_jump;
                 nob_da_append(ops, op);
                 p_lexer_get_token(lexer);
-                while (lexer->token != '}')
+                while (lexer->token != PLEX_deindent && lexer->token != PLEX_eof)
                 {
                     if (!parse_statement(lexer, file_path, vars, local_variables_count, ops))
                         return false;
                     p_lexer_get_token(lexer);
                 }
+                long lexes[] = {PLEX_deindent, PLEX_eof};
+                expect_plexes(lexer, file_path, lexes, 2);
                 size_t end_block_index = ops->count;
                 op.type = SPY_OP_block_mark_end;
                 op.data.jump.index = end_block_index;
